@@ -1,63 +1,192 @@
-<!doctype html>
-<head>
-    <meta content="text/html;charset=utf-8" http-equiv="Content-Type">
-    <meta content="utf-8" http-equiv="encoding">
-</head>
+<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>League Visualization Dashboard</title>
+    <link rel="stylesheet" type="text/css" href="lib/parasol.css" />
+    <script src="lib/d3.v5.min.js"></script>
+    <script src="lib/parasol.standalone.js"></script>
+    <script src="https://cdn.plot.ly/plotly-2.26.0.min.js"></script>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        padding: 20px;
+      }
+      .controls {
+        margin-bottom: 25px;
+        padding: 10px;
+        border: 1px solid #ccc;
+        width: 350px;
+        border-radius: 6px;
+        background: #fafafa;
+      }
+      .control-label {
+        margin-top: 10px;
+        font-weight: bold;
+      }
+    </style>
+  </head>
+  <body class="container m-auto">
+    <h1 class="text-xl font-medium">League Visualization Dashboard</h1>
 
-<title>Example 3</title>
+    <div class="grid grid-cols-2 gap-4">
+      <div class="card controls">
+        <div class="control-label">Curve smoothness:</div>
+        <input type="range" min="0" max="25" value="0" id="smoothness" />
+        <div class="control-label">Bundling strength for clusters:</div>
+        <input type="range" min="0" max="100" value="0" id="bundling" />
+      </div>
 
-<link rel="stylesheet" type="text/css" href="lib/parasol.css">
-
-<script src="lib/d3.v5.min.js"></script>
-<script src="lib/parasol.standalone.js"></script>
-
-<body>
-
-<h1> Bundling using clusters </h1>
-    <div style="margin-left: 250px;">
-    Curve smoothness: <br> <input type="range" min="0" max="25" value="0" id="smoothness"> <br>
-    Bundling strength for clusters: <br> <input type="range" min="0" max="100" value="0" id="bundling"> <br>
+      <!-- Heatmap -->
+      <div id="heatmap" class="w-full h-80"></div>
     </div>
-  </div> <br>
-  <div id="p0" class="parcoords" style="height:400px; width:1800px;"></div>
-  <div id="grid" style="width:100%;height:500px;" class="slickgrid-container"></div>
-</body>
 
-<script>
-// read in data and create visualization
-d3.csv('data/leagues_data.csv').then(function(data) {
-  // remove non-numeric 'name' variable from clustering
-  var cluster_vars = d3.keys(data[0]).filter(function(key) {
-    return key !== 'league_name' && key !== 'team_name' && key !== 'buildUpPlaySpeedClass' && key !== 'buildUpPlayDribblingClass' && key !== 'buildUpPlayPassingClass' && key !== 'chanceCreationPositioningClass' && key !== 'defencePressureClass' && key !== 'defenceAggressionClass' && key !== 'defenceTeamWidthClass' && key !== 'defenceDefenderLineClass' && key !== 'date' && key !== 'chanceCreationShootingClass' && key !== 'chanceCreationCrossingClass' && key !== 'chanceCreationPassingClass' && key !== 'buildUpPlayPositioningClass' && key !== 'chanceCreationPassingClass'; 
-  });
+    <!-- Parallel Coordinates -->
+    <div id="p0" class="parcoords w-full h-80"></div>
 
-  // create Parasol object, add grid, link, and perform clustering
-  var ps = Parasol(data)('.parcoords')
-            .attachGrid({container: '#grid'})
-            .linked()
-            .cluster({k: 11, vars: cluster_vars, hidden: false})
-            .alpha(0.05)  // update transparency
-            .reorderable()  // make axes dynamically reorderable
-            .render()
+    <!-- Data Grid -->
+    <div id="grid" class="slickgrid-container"></div>
 
+    <script>
+      // -------------------------------------------
+      // LOAD CSV + BUILD EVERYTHING
+      // -------------------------------------------
+      d3.csv("data/leagues_data.csv").then(function (data) {
+        // -------------------------------------------
+        // CLEAN ATTRIBUTE FILTERING
+        // -------------------------------------------
+        const ignoreKeys = new Set([
+          "team_name",
+          "team_fifa_api_id",
+          "team_api_id",
+          "league_name_id",
+          "date",
+          "buildUpPlaySpeedClass",
+          "buildUpPlayDribblingClass",
+          "buildUpPlayPassingClass",
+          "buildUpPlayPositioningClass",
+          "chanceCreationPositioningClass",
+          "chanceCreationShootingClass",
+          "chanceCreationCrossingClass",
+          "chanceCreationPassingClass",
+          "defencePressureClass",
+          "defenceAggressionClass",
+          "defenceTeamWidthClass",
+          "defenceDefenderLineClass",
+        ]);
+        const clusterVariables = Object.keys(data[0]).filter(
+          (key) => !ignoreKeys.has(key) && !isNaN(+data[0][key])
+        );
 
-  // bundling strength slider
-  d3.select('#bundling').on('input', function() {
-    ps.bundlingStrength(this.value/100)
-      .bundleDimension('cluster')
-      .render();  // divide by a hundred to get decimals
-  });
+        const filteredData = data.map((row) => {
+          const newRow = {};
+          for (const key in row) {
+            if (!ignoreKeys.has(key)) {
+              newRow[key] = row[key];
+            }
+          }
+          return newRow;
+        });
 
-  // smoothness
-  d3.select("#smoothness").on('input', function() {
-    ps.smoothness(this.value/100).render();  // divide by a hundred to get decimals
-  });
-});
+        const firstColumn = "league_name";
 
+        // -------------------------------------------
+        // PARASOL PARALLEL COORDINATES
+        // -------------------------------------------
+        const ps = Parasol(filteredData)(".parcoords")
+          .attachGrid({ container: "#grid" })
+          .linked()
+          .cluster({ k: 11, vars: clusterVariables, hidden: false })
+          .dimensions([
+            firstColumn,
+            ...clusterVariables.filter((v) => v !== firstColumn),
+          ])
+          .alpha(0.05)
+          .reorderable()
+          .render();
 
-</script>
+        // sliders: smoothness + bundling
+        d3.select("#bundling").on("input", function () {
+          ps.bundlingStrength(+this.value / 100)
+            .bundleDimension("cluster")
+            .render();
+        });
+        d3.select("#smoothness").on("input", function () {
+          ps.smoothness(+this.value / 100).render();
+        });
 
-<!-- 
-python -m http.server 8000  
-http://localhost:8000/
--->
+        // -------------------------------------------
+        // BUILD HEATMAP (Plotly)
+        // -------------------------------------------
+        // Heatmap: attributes vs attributes for a selected league
+        const heatmapAttributes = [
+          "buildUpPlaySpeed",
+          "buildUpPlayDribbling",
+          "buildUpPlayPassing",
+          "chanceCreationPassing",
+        ];
+
+        // Helper to compute mean for each attribute in a league
+        function getLeagueAttributeMeans(leagueName) {
+          const leagueRows = filteredData.filter((d) => d.league_name === leagueName);
+          const means = {};
+          heatmapAttributes.forEach((attr) => {
+            const vals = leagueRows
+              .map((d) => +d[attr])
+              .filter((v) => !isNaN(v));
+            means[attr] = d3.mean(vals);
+          });
+          return means;
+        }
+
+        // Default: select first league
+        let selectedLeague = filteredData[0].league_name;
+
+        function renderLeagueHeatmap(leagueName) {
+          const means = getLeagueAttributeMeans(leagueName);
+          // Build attribute vs attribute matrix (correlation-like)
+          const matrix = heatmapAttributes.map((attr1) =>
+            heatmapAttributes.map((attr2) =>
+              Math.abs(means[attr1] - means[attr2])
+            )
+          );
+          // Normalize each row
+          const normalized = matrix.map((row) => {
+            const min = Math.min(...row);
+            const max = Math.max(...row);
+            return row.map((val) =>
+              max !== min ? (val - min) / (max - min) : 0
+            );
+          });
+          Plotly.newPlot(
+            "heatmap",
+            [
+              {
+                z: normalized,
+                x: heatmapAttributes,
+                y: heatmapAttributes,
+                type: "heatmap",
+                colorscale: "Viridis",
+                showscale: true,
+                text: normalized.map((row) => row.map((v) => v.toFixed(2))),
+                texttemplate: "%{text}",
+                hoverinfo: "z",
+              },
+            ],
+            {
+              title: `Attribute Comparison Heatmap (${leagueName})`,
+              xaxis: { title: "Attribute" },
+              yaxis: { title: "Attribute" },
+            }
+          );
+        }
+
+        // Initial render
+        renderLeagueHeatmap(selectedLeague);
+      });
+    </script>
+    <!-- Run with: python -m http.server 8000 http://localhost:8000/ -->
+  </body>
+</html>
