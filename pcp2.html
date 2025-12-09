@@ -38,6 +38,8 @@
         <input type="range" min="0" max="25" value="0" id="smoothness" />
         <div class="control-label">Bundling strength for clusters:</div>
         <input type="range" min="0" max="100" value="0" id="bundling" />
+        <div class="control-label">Line opacity (alpha):</div>
+        <input type="range" min="0" max="100" value="10" id="alpha" />
         <div style="display:flex; gap:8px; align-items:center; margin-top:10px;">
           <div style="flex:1">
             <div class="control-label">Color by:</div>
@@ -165,6 +167,12 @@
         let currentColorMode = 'league'; // 'league' or 'cluster'
         // current number of clusters (k)
         let currentClusterK = 12;
+        // current alpha/opacity for PCP lines
+        let currentAlpha = 0.1;
+        // current smoothness value (0-1)
+        let currentSmoothness = 0;
+        // current bundling strength (0-1)
+        let currentBundling = 0;
         // keep a reference to current data passed to Parasol
         let currentParasolData = null;
 
@@ -197,7 +205,7 @@
           const psBase = Parasol(dataForParasol)('.parcoords')
             .attachGrid({ container: '#grid' })
             .linked()
-            .alpha(0.1)
+            .alpha(currentAlpha)
             .reorderable();
 
           // Determine which variables are numeric in the supplied data (exclude league/team)
@@ -209,6 +217,17 @@
             psLocal = psBase.cluster({ k: currentClusterK, vars: numericVars, hidden: false });
           }
           psLocal = psLocal.render();
+
+          // Apply saved smoothness and bundling settings
+          if (currentSmoothness > 0) {
+            psLocal.smoothness(currentSmoothness);
+          }
+          if (currentBundling > 0) {
+            psLocal.bundlingStrength(currentBundling).bundleDimension('cluster');
+          }
+          if (currentSmoothness > 0 || currentBundling > 0) {
+            psLocal.render();
+          }
 
           // Customize tick labels for ordinal attributes to show text instead of numbers
           setTimeout(() => {
@@ -267,6 +286,7 @@
           // (re)bind sliders: remove previous listeners first to avoid duplicates
           d3.select('#bundling').on('input', null);
           d3.select('#smoothness').on('input', null);
+          d3.select('#alpha').on('input', null);
 
           // Helper function to reapply ordinal labels after render
           function reapplyOrdinalLabels() {
@@ -298,13 +318,20 @@
           }
 
           d3.select('#bundling').on('input', function () {
-            psLocal.bundlingStrength(+this.value / 100)
+            currentBundling = +this.value / 100;
+            psLocal.bundlingStrength(currentBundling)
               .bundleDimension('cluster')
               .render();
             reapplyOrdinalLabels();
           });
           d3.select('#smoothness').on('input', function () {
-            psLocal.smoothness(+this.value / 100).render();
+            currentSmoothness = +this.value / 100;
+            psLocal.smoothness(currentSmoothness).render();
+            reapplyOrdinalLabels();
+          });
+          d3.select('#alpha').on('input', function () {
+            currentAlpha = +this.value / 100;
+            psLocal.alpha(currentAlpha).render();
             reapplyOrdinalLabels();
           });
 
