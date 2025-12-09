@@ -514,7 +514,7 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
       {
         width: 800,
         height: 480,
-        margin: { l: 60, r: 120, t: 20, b: 160 },
+        margin: { l: 200, r: 120, t: 20, b: 160 },
         xaxis: { automargin: true, tickangle: -30, tickfont: { size: 10 } },
         yaxis: { automargin: true, tickfont: { size: 10 } },
       }
