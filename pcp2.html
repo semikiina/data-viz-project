@@ -18,7 +18,7 @@
         margin-bottom: 25px;
         padding: 10px;
         border: 1px solid #ccc;
-        width: 350px;
+        width: 580px;
         border-radius: 6px;
         background: #fafafa;
       }
@@ -34,6 +34,8 @@
 
     <div class="grid grid-cols-2 gap-4">
       <div class="card controls">
+        <div class="control-label">Attribute Weights:</div>
+        <div id="weight-sliders" style="display:grid; grid-template-columns: repeat(3, 1fr); gap:16px; margin-top:8px;"></div>
         <div class="control-label">Curve smoothness:</div>
         <input type="range" min="0" max="25" value="0" id="smoothness" />
         <div class="control-label">Bundling strength for clusters:</div>
@@ -44,6 +46,7 @@
             <select id="color-by-select" style="padding:6px; border-radius:4px; border:1px solid #ccc; width:100%;">
               <option value="league">League</option>
               <option value="cluster">Cluster</option>
+              <option value="weighted">Weighted Score</option>
             </select>
           </div>
           <div style="width:140px">
@@ -83,7 +86,7 @@
       // -------------------------------------------
       // LOAD CSV + BUILD EVERYTHING
       // -------------------------------------------
-      d3.csv("data/leagues_data.csv").then(function (data) {
+      d3.csv("data/leagues_data_filled.csv").then(function (data) {
         // -------------------------------------------
         // CLEAN ATTRIBUTE FILTERING
         // -------------------------------------------
@@ -141,8 +144,59 @@
           return newRow;
         });
 
-        
+        // ===== Attribute Groups (used by sliders + weightedScore) =====
+        const attributeGroups = {
+          "Build Up": [
+            "buildUpPlaySpeed",
+            "buildUpPlayDribbling",
+            "buildUpPlayPassing",
+            "buildUpPlayPositioningClass"
+          ],
+          "Chance Creation": [
+            "chanceCreationPassing",
+            "chanceCreationCrossing",
+            "chanceCreationShooting",
+            "chanceCreationPositioningClass"
+          ],
+          "Defence": [
+            "defencePressure",
+            "defenceAggression",
+            "defenceTeamWidth",
+            "defenceDefenderLineClass"
+          ]
+        };
 
+        // Full attribute list for weighted score 
+        const weightedAttributes = Object.values(attributeGroups).flat();
+
+        // Initial weights (each attribute defaults to 1)
+        let attributeWeights = {};
+        weightedAttributes.forEach(a => (attributeWeights[a] = 1));
+
+        // Weight panel container
+        const weightDiv = d3
+          .select("#weight-sliders")
+          .style("display", "flex")
+          .style("flex-direction", "column")
+          .style("gap", "10px");
+
+
+        //  Compute weightedScore for each row
+        function computeWeightedScores(data) {
+          data.forEach(d => {
+            let sum = 0, totalW = 0;
+            for (const [attr, w] of Object.entries(attributeWeights)) {
+              if (d[attr] !== undefined && !isNaN(+d[attr])) {
+                sum += (+d[attr]) * w;
+                totalW += w;
+              }
+            }
+            d.weightedScore = totalW > 0 ? sum / totalW : 0;
+          });
+          return data;
+        }
+
+        
         const firstColumn = "league_name";
 
         // Recompute clusterVariables now that ordinal _ord fields exist
@@ -160,7 +214,7 @@
           firstColumn,
           ...clusterVariables.filter((v) => v !== firstColumn),
         ];
-
+       
         // current coloring mode (controls how PCP polylines are colored)
         let currentColorMode = 'league'; // 'league' or 'cluster'
         // current number of clusters (k)
@@ -182,11 +236,17 @@
             const clusters = Array.from(new Set(data.map(d => d.cluster)));
             const clusterPalette = d3.scaleOrdinal().domain(clusters).range(d3.schemeTableau10);
             psInstance.color(d => clusterPalette(d.cluster)).render();
+          } else if (modeLower === 'weighted') {
+            const domain = d3.extent(dataForParasol, d => +d.weightedScore);
+            const colorScale = d3.scaleSequential(d3.interpolateYlOrRd).domain(domain);
+            psInstance.color(d => colorScale(+d.weightedScore)).render();
           }
+
         }
 
         // Initialize Parasol (wrap in function so we can recreate with filtered data)
         function initParasol(dataForParasol) {
+          if (!Array.isArray(dataForParasol)) dataForParasol = [];
           // clear previous containers to avoid duplicate renders
           const parcoordsEl = document.querySelector('.parcoords');
           if (parcoordsEl) parcoordsEl.innerHTML = '';
@@ -354,6 +414,8 @@
 
         // selected attributes state (attributes chosen by clicking axis labels)
         let selectedAttributes = [];
+        renderWeightSliders();
+
 
         // Highlight or unhighlight axis labels based on selection state
         function updateAxisLabelHighlights() {
@@ -429,7 +491,9 @@
 
           updateAxisLabelHighlights();
           rebuildParasolFromSelection();
+          renderWeightSliders();   
         }
+
 
         function rebuildParasolFromSelection() {
           const currentLeagues = Array.isArray(selectedLeagues) ? selectedLeagues : [];
@@ -441,12 +505,118 @@
           const payload = leagueRows.map(d => {
             const obj = { league_name: d.league_name, team_name: d.team_name };
             selectedAttributes.forEach(a => { obj[a] = d[a]; });
+            // Add weightedScore if exists
+            if ("weightedScore" in d) {
+              obj.weightedScore = d.weightedScore;
+            }
             return obj;
           });
           ps = initParasol(payload);
         }
 
-        // -------------------------------------------
+        // =====================
+        // RENDER WEIGHT SLIDERS
+        // =====================
+        function renderWeightSliders() {
+          const panel = weightDiv;
+          panel.html(""); 
+
+          if (selectedAttributes.length === 0) {
+            panel
+              .append("div")
+              .style("font-size", "13px")
+              .style("color", "#666")
+              .style("padding", "6px")
+              .text("Select attributes in the heatmap to adjust their weights.");
+            return;
+          }
+
+          // --- Build groups ---
+          const groups = ["Build Up", "Chance Creation", "Defence"];
+
+          groups.forEach((groupName) => {
+            const attrsInGroup = attributeGroups[groupName].filter((a) =>
+              selectedAttributes.includes(a)
+            );
+            if (attrsInGroup.length === 0) return;
+
+            // Group title
+            panel
+              .append("div")
+              .style("font-weight", "600")
+              .style("color", "#1565c0")
+              .style("margin-top", "6px")
+              .text(groupName);
+
+            // Sliders
+            attrsInGroup.forEach((attr) => {
+              const row = panel
+                .append("div")
+                .style("display", "flex")
+                .style("align-items", "center")
+                .style("gap", "6px");
+
+              row
+                .append("span")
+                .style("flex", "1")
+                .style("font-size", "12.5px")
+                .style("overflow", "hidden")
+                .style("text-overflow", "ellipsis")
+                .style("white-space", "nowrap")
+                .text(attr);
+
+              const slider = row
+                .append("input")
+                .attr("type", "range")
+                .attr("min", 0)
+                .attr("max", 2)
+                .attr("step", 0.1)
+                .attr("value", attributeWeights[attr])
+                .style("width", "80px");
+
+              slider.on("input", function () {
+                attributeWeights[attr] = +this.value;
+              });
+            });
+          });
+
+          // ------------------------------------------------------------
+          // Apply Button
+          // ------------------------------------------------------------
+
+          const btn = panel
+            .append("button")
+            .attr("id", "apply-weights")
+            .text("Apply Weights")
+            .style("display", "block")
+            .style("margin", "12px auto")
+            .style("padding", "6px 14px")
+            .style("font-size", "13px")
+            .style("border", "1.5px solid #1565c0")
+            .style("border-radius", "6px")
+            .style("background", "white")
+            .style("color", "#1565c0")
+            .style("cursor", "pointer")
+            .style("font-weight", "600");
+
+          btn.on("mouseover", function () {
+            d3.select(this)
+              .style("background", "#1565c0")
+              .style("color", "white");
+          });
+
+          btn.on("mouseout", function () {
+            d3.select(this)
+              .style("background", "white")
+              .style("color", "#1565c0");
+          });
+
+          btn.on("click", function () {
+            computeWeightedScores(filteredData);
+            rebuildParasolFromSelection();
+          });
+        }
+
         // BUILD HEATMAP (Plotly)
         // -------------------------------------------
         // Heatmap: attributes vs attributes for a selected league
@@ -754,6 +924,9 @@
 
         // Initial render
         renderLeagueHeatmap(selectedLeagues);
+
+
+
       });
     </script>
     <!-- Run with: 
