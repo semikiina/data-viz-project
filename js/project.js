@@ -93,6 +93,8 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
     defenceAggression: "Aggression",
     defenceTeamWidth: "Team Width",
     defenceDefenderLineClass: "Defender Line",
+    weightedScore: "Weighted Score",
+    cluster: "Cluster",
   };
 
   // Attribute groups and weights
@@ -117,9 +119,7 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
     ],
   };
 
-  let currentColorMode = "league";
-  let currentClusterK = 12;
-  let currentParasolData = null;
+  let currentClusterK = 0;
   // current alpha/opacity for PCP lines
   let currentAlpha = 0.1;
   // current smoothness value (0-1)
@@ -132,13 +132,12 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
 
   let selectedAttributes = heatmapAttributes.slice();
 
-  let angryRainbow = d3.scaleSequential((t) =>
-    d3.hsl(t * 360, 1, 0.5).toString()
-  );
+  let ps = null;
 
   // Map columns to their types
   function getColumnType(col) {
     if (col === "team_name" || col === "league_name") return "Team";
+    if (col == "weightedScore") return "Score";
     if (
       [
         "buildUpPlaySpeed",
@@ -174,14 +173,27 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
   weightedAttributes.forEach((a) => (attributeWeights[a] = 1));
 
   function updateAll() {
-    if(selectedLeagues.length == 0){
+    if (selectedLeagues.length == 0) {
       document.getElementById("show-league-message").classList.remove("hidden");
       document.getElementById("graphs").style.display = "none";
-      return
-    }
-    else{
+      return;
+    } else {
       document.getElementById("show-league-message").classList.add("hidden");
       document.getElementById("graphs").style.display = "";
+    }
+
+    const smoothnessSlider = document.getElementById("curve-smoothness-div");
+    const bundlingSlider = document.getElementById("bundling-strength-div");
+    const clusterDiv = document.getElementById("cluster-div");
+
+    if (currentClusterK > 0) {
+      clusterDiv.style.display = "none";
+      if (smoothnessSlider) smoothnessSlider.style.display = "";
+      if (bundlingSlider) bundlingSlider.style.display = "";
+    } else {
+      clusterDiv.style.display = "";
+      if (smoothnessSlider) smoothnessSlider.style.display = "none";
+      if (bundlingSlider) bundlingSlider.style.display = "none";
     }
 
     // PCP
@@ -228,61 +240,70 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
         totalW = 0;
       for (const [attr, w] of Object.entries(attributeWeights)) {
         // Only include attributes that are currently selected
-        if (selectedAttributes.includes(attr) && d[attr] !== undefined && !isNaN(+d[attr])) {
+        if (
+          selectedAttributes.includes(attr) &&
+          d[attr] !== undefined &&
+          !isNaN(+d[attr])
+        ) {
           sum += +d[attr] * w;
           totalW += w;
         }
       }
-      d.weightedScore = totalW > 0 ? sum / totalW : 0;
+      d.weightedScore = totalW > 0 ? (sum / totalW).toFixed(2) : "0.00";
     });
     return data;
   }
 
   function applyColoring(psInstance, dataForParasol) {
     if (!psInstance) return;
-    const modeLower = selectedLeagues.length == 1 ? "cluster" : "league";
-
-    if (modeLower === "league") {
-
-      const customColors = [
-        '#000000', // Blue
-        '#e69f00', // Yellow
-        '#56b4e9', // Green
-        '#009e73', // Red
-        '#f0e442', // Purple
-        '#0072b2', // Orange
-        '#d55e00', // Brown
-        '#cc79a7', // Pink
-        '#666666', // Gray
-        '#cccccc', // Olive
-        '#808000', // Cyan
-      ];
-      const leagueColor = d3
-        .scaleOrdinal()
-        .domain(leagues)
-        .range(customColors);
-      psInstance.color((d) => leagueColor(d.league_name)).render();
-    } else {
+    const customColors = [
+      "#000000", // Black
+      "#e69f00", // Orange
+      "#56b4e9", // Sky Blue
+      "#009e73", // Green
+      "#f0e442", // Yellow
+      "#0072b2", // Blue
+      "#d55e00", // Vermillion
+      "#cc79a7", // Pink
+      "#666666", // Gray
+      "#cccccc", // Light Gray
+      "#808000", // Olive
+    ];
+    // If clusters are enabled (k > 0), color by cluster, else by league/team
+    if (currentClusterK > 0) {
       const data = dataForParasol || psInstance.state.data;
       const customColors = [
-        '#000000', // Blue
-        '#e69f00', // Yellow
-        '#56b4e9', // Green
-        '#009e73', // Red
-        '#f0e442', // Purple
-        '#0072b2', // Orange
-        '#d55e00', // Brown
-        '#cc79a7', // Pink
-        '#666666', // Gray
-        '#cccccc', // Olive
-        '#808000', // Cyan
+        "#000000", // Blue
+        "#e69f00", // Yellow
+        "#56b4e9", // Green
+        "#009e73", // Red
+        "#f0e442", // Purple
+        "#0072b2", // Orange
+        "#d55e00", // Brown
+        "#cc79a7", // Pink
+        "#666666", // Gray
+        "#cccccc", // Olive
+        "#808000", // Cyan
       ];
-      const clusterPalette = d3
-        .scaleOrdinal()
-        .domain(data)
-        .range(customColors);
-      // Assign cluster index based on row order if not present
-      psInstance.color((d, i) => clusterPalette(i)).render();
+      const clusterPalette = d3.scaleOrdinal().domain(data).range(customColors);
+      psInstance.color((d) => clusterPalette(d.cluster)).render();
+    } else {
+      // If only one league, color by team; else by league
+      if (selectedLeagues.length === 1) {
+        const teams = Array.from(
+          new Set(
+            (dataForParasol || psInstance.state.data).map((d) => d.team_name)
+          )
+        );
+        const teamColor = d3.scaleOrdinal().domain(teams).range(customColors);
+        psInstance.color((d) => teamColor(d.team_name)).render();
+      } else {
+        const leagueColor = d3
+          .scaleOrdinal()
+          .domain(leagues)
+          .range(customColors);
+        psInstance.color((d) => leagueColor(d.league_name)).render();
+      }
     }
   }
 
@@ -332,10 +353,11 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
     const uniqueLeagues = Array.from(
       new Set(dataForParasol.map((d) => d.league_name))
     );
-    const baseCols = uniqueLeagues.length === 1 
-      ? ["team_name"]  // Only show team names when one league
-      : ["league_name", "team_name"];  // Show both when multiple leagues
-    
+    const baseCols =
+      uniqueLeagues.length === 1
+        ? ["team_name"] // Only show team names when one league
+        : ["league_name", "team_name"]; // Show both when multiple leagues
+
     const orderedCols = baseCols.concat(
       selectedAttributes.filter(
         (attr) =>
@@ -344,7 +366,7 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
           dataForParasol.some((d) => d.hasOwnProperty(attr))
       )
     );
-    
+
     // Reorder each row to match orderedCols (only include columns in orderedCols)
     const reorderedData = dataForParasol.map((row) => {
       const newRow = {};
@@ -374,7 +396,6 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
       .linked()
       .alpha(currentAlpha);
 
-
     const keys = reorderedData.length ? Object.keys(reorderedData[0]) : [];
     const numericVars = keys.filter(
       (k) =>
@@ -384,7 +405,7 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
     );
     let psLocal = psBase;
 
-    if (numericVars.length > 0) {
+    if (numericVars.length > 0 && currentClusterK > 0) {
       psLocal = psBase.cluster({
         k: currentClusterK,
         vars: numericVars,
@@ -393,6 +414,7 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
     }
 
     psLocal = psLocal.render();
+    ps = psLocal;
 
     // Force axis label mapping after render (for libraries that require post-render relabel)
     if (Object.keys(axisLabels).length > 0 && psLocal.axisLabels) {
@@ -432,7 +454,6 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
     }
 
     setTimeout(reapplyOrdinalLabels, 10);
-    currentParasolData = reorderedData;
     applyColoring(psLocal, reorderedData);
 
     // Sliders
@@ -461,7 +482,6 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
   function renderEmptyParasol() {
     document.querySelector(".parcoords").innerHTML = "";
     document.querySelector("#grid").innerHTML = "";
-    currentParasolData = [];
   }
   // #endregion
 
@@ -485,11 +505,9 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
     }
     const groups = ["Build Up", "Chance Creation", "Defence"];
     groups.forEach((groupName) => {
-      console.log(selectedAttributes)
       const attrsInGroup = attributeGroups[groupName].filter((a) =>
         selectedAttributes.includes(a)
       );
-      console.log(attrsInGroup);
       if (attrsInGroup.length === 0) return;
       panel
         .append("div")
@@ -498,7 +516,7 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
       attrsInGroup.forEach((attr) => {
         const row = panel
           .append("div")
-          .attr('class', 'flex flex-row gap-1 items-center')
+          .attr("class", "flex flex-row gap-1 items-center");
         row
           .append("span")
           .attr("class", "fieldset-legend text-sm w-64")
@@ -633,9 +651,9 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
         width: null,
         height: "100%",
         autosize: true,
-        margin: {r: 200, t: 20, b: 150 },
+        margin: { r: 200, t: 20, b: 150 },
         xaxis: { automargin: true, tickfont: { size: 9 }, tickangle: -30 },
-        yaxis: { automargin: true, tickfont: { size: 9} },
+        yaxis: { automargin: true, tickfont: { size: 9 } },
       },
       { responsive: true, displayModeBar: false }
     );
@@ -970,12 +988,14 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
       const point = data.points[0];
       if (point && point.x && point.y) {
         // Convert display labels back to attribute keys
-        const attrX = Object.keys(attributeTitles).find(
-          (key) => attributeTitles[key] === point.x
-        ) || point.x;
-        const attrY = Object.keys(attributeTitles).find(
-          (key) => attributeTitles[key] === point.y
-        ) || point.y;
+        const attrX =
+          Object.keys(attributeTitles).find(
+            (key) => attributeTitles[key] === point.x
+          ) || point.x;
+        const attrY =
+          Object.keys(attributeTitles).find(
+            (key) => attributeTitles[key] === point.y
+          ) || point.y;
         toggleAttribute(attrX);
         toggleAttribute(attrY);
       }
@@ -1013,24 +1033,28 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
   }
 
   const clusterCountSelect = d3.select("#cluster-count-select");
-  const clusterOptions = [3, 4, 5, 6, 7, 8, 9, 10, 12, 15];
-  clusterCountSelect
-    .selectAll("option")
-    .data(clusterOptions)
-    .enter()
-    .append("option")
-    .attr("value", (d) => d)
-    .text((d) => d + " clusters");
-  clusterCountSelect.property("value", currentClusterK);
+  const clusterOptions = [0, 3, 4, 5, 6, 7, 8, 9, 10, 12, 15];
+  // Clear and append options manually to ensure 0 is always present
+  clusterCountSelect.html("");
+  clusterOptions.forEach((d) => {
+    const opt = document.createElement("option");
+    opt.value = d;
+    opt.textContent = d === 0 ? "No clusters" : d + " clusters";
+    if (d === currentClusterK) opt.selected = true;
+    clusterCountSelect.node().appendChild(opt);
+  });
   clusterCountSelect.on("change", function () {
     const k = +this.value;
-    if (!isNaN(k) && k > 1) {
+    if (!isNaN(k)) {
       currentClusterK = k;
       updateAll();
     }
   });
 
   // #endregion
+
+  // Selection state
+  let selectedRows = new Set();
 
   // -------------------------------------------
   // #region 7.5. CUSTOM TABLE WITH SEARCH & PAGINATION
@@ -1052,11 +1076,15 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
     // Only show selectedAttributes, fallback to all if none selected
     function getColumnsToShow() {
       // Show initialCols (league_name, team_name) plus any selectedAttributes (no duplicates)
-      const cols = initialCols.concat(
+      let cols = initialCols.concat(
         selectedAttributes
           ? selectedAttributes.filter((c) => !initialCols.includes(c))
           : []
       );
+      // If any row has weightSum, add it as the last column
+      if (data && data.some((row) => row.hasOwnProperty("weightedScore"))) {
+        if (!cols.includes("weightedScore")) cols.push("weightedScore");
+      }
       return cols;
     }
 
@@ -1131,6 +1159,11 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
       });
     }
 
+    // Helper to get unique row id (team_name + league_name)
+    function getRowId(row) {
+      return row.league_name + "||" + row.team_name;
+    }
+
     function renderTable() {
       grid.innerHTML = "";
       const table = document.createElement("table");
@@ -1147,6 +1180,13 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
       let lastType = null,
         span = 0;
       let typeCells = [];
+
+      let selectionTh = document.createElement("th");
+      selectionTh.rowSpan = 1;
+      selectionTh.className = "bg-base-300 text-center border border-base-300";
+      selectionTh.textContent = ""; // No type for selection column
+      typeRow.appendChild(selectionTh);
+
       columnsToShow.forEach((col, idx) => {
         const type = getColumnType(col);
         if (type !== lastType && span > 0) {
@@ -1159,22 +1199,27 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
           typeCells.push({ type: lastType, span });
           span = 0;
         }
-        lastType = type;
         span++;
-        // If last column, append cell
-        if (idx === columnsToShow.length - 1) {
+        // If this is the last column, append its type cell
+        if (idx === columnsToShow.length - 1 && span > 0) {
           const th = document.createElement("th");
           th.colSpan = span;
           th.className = "bg-base-300 text-center border border-base-300";
-          th.textContent = lastType;
+          th.textContent = type;
           typeRow.appendChild(th);
-          typeCells.push({ type: lastType, span });
+          typeCells.push({ type: type, span });
         }
+        lastType = type;
       });
       thead.appendChild(typeRow);
 
       // Second header row: attributeTitles or raw column name
       const headerRow = document.createElement("tr");
+      // Selection column header (empty)
+      const selectTh2 = document.createElement("th");
+      selectTh2.className = "bg-base-200 border border-base-300";
+      headerRow.appendChild(selectTh2);
+
       columnsToShow.forEach((key) => {
         const th = document.createElement("th");
         th.classList.add(
@@ -1214,6 +1259,40 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
       for (let i = startIdx; i < endIdx; i++) {
         const row = filteredRows[i];
         const tr = document.createElement("tr");
+        // Selection checkbox
+        const tdSelect = document.createElement("td");
+        tdSelect.className = "text-center border border-base-300";
+        const rowId = getRowId(row);
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.className = "checkbox checkbox-xs";
+        checkbox.checked = selectedRows.has(rowId);
+        checkbox.addEventListener("change", function () {
+          if (this.checked) {
+            console.log("checked");
+            selectedRows.add(rowId);
+            tr.classList.add("bg-base-200");
+          } else {
+            tr.classList.remove("bg-base-200");
+            selectedRows.delete(rowId);
+            ps.unhighlight([row]);
+          }
+          // Highlight all selected rows in Parasol
+          if (ps && typeof ps.highlight === "function") {
+            const selected = filteredRows.filter((r) =>
+              selectedRows.has(getRowId(r))
+            );
+            if (selected.length == 0) {
+              const canvas = document.querySelector(".foreground");
+              if (canvas) {
+                canvas.classList.remove("faded");
+              }
+            } else ps.highlight(selected);
+          }
+        });
+        tdSelect.appendChild(checkbox);
+        tr.appendChild(tdSelect);
+
         columnsToShow.forEach((key) => {
           const td = document.createElement("td");
           if (key == "team_name" || key == "league_name")
@@ -1222,23 +1301,16 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
           // For ordinal columns, show label if available
           if (ordinalMappings[key] && row[key + "_label"]) {
             td.textContent = row[key + "_label"];
+          } else if (key === "cluster" && row[key] !== undefined) {
+            td.textContent = parseInt(row[key]) + 0; // Already 1-based, but ensure integer
+          } else if (key === "weightSum" && row[key] !== undefined) {
+            td.textContent = row[key];
           } else {
             td.textContent = row[key];
           }
           tr.appendChild(td);
         });
-        tr.addEventListener("mouseenter", function () {
-          tr.classList.add("bg-base-200");
-          if (ps && typeof ps.highlight === "function") {
-            ps.highlight([row]);
-          }
-        });
-        tr.addEventListener("mouseleave", function () {
-          tr.classList.remove("bg-base-200");
-          if (ps && typeof ps.highlight === "function") {
-            ps.unhighlight([row]);
-          }
-        });
+
         tbody.appendChild(tr);
       }
       table.appendChild(tbody);
