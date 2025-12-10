@@ -138,6 +138,7 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
   function getColumnType(col) {
     if (col === "team_name" || col === "league_name") return "Team";
     if (col == "weightedScore") return "Score";
+    if (col == "cluster") return "Cluster";
     if (
       [
         "buildUpPlaySpeed",
@@ -212,6 +213,7 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
           obj[a] = d[a];
         });
         if ("weightedScore" in d) obj.weightedScore = d.weightedScore;
+        if ("cluster" in d) obj.cluster = d.cluster;
         return obj;
       });
       initParasol(payload);
@@ -393,7 +395,6 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
 
     const psBase = Parasol(reorderedData)(".parcoords")
       .reorderable()
-      .linked()
       .alpha(currentAlpha);
 
     const keys = reorderedData.length ? Object.keys(reorderedData[0]) : [];
@@ -415,6 +416,23 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
 
     psLocal = psLocal.render();
     ps = psLocal;
+    
+    // Sync cluster assignments back to filteredData for table display
+    if (currentClusterK > 0 && psLocal.state && psLocal.state.data) {
+      psLocal.state.data.forEach((clusteredRow) => {
+        const match = filteredData.find(
+          (d) => d.league_name === clusteredRow.league_name && d.team_name === clusteredRow.team_name
+        );
+        if (match && clusteredRow.cluster !== undefined) {
+          match.cluster = clusteredRow.cluster;
+        }
+      });
+    }
+
+    // Enable brushing
+    if (typeof psLocal.brushable === 'function') {
+      psLocal.brushable();
+    }
 
     // Force axis label mapping after render (for libraries that require post-render relabel)
     if (Object.keys(axisLabels).length > 0 && psLocal.axisLabels) {
@@ -456,6 +474,101 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
     setTimeout(reapplyOrdinalLabels, 10);
     applyColoring(psLocal, reorderedData);
 
+    // Clean up old brush monitoring
+    if (window._brushObserver) {
+      window._brushObserver.disconnect();
+      window._brushObserver = null;
+    }
+    
+    let updateTimeout = null;
+    let lastFilteredCount = 0;
+    let cachedBrushData = {}; // Cache brush state from mutations
+    
+    const updateTableFromBrush = () => {
+      // Use ONLY cached data - don't query DOM at all
+      const brushFilters = Object.values(cachedBrushData).filter(b => b.active);
+      
+      if (brushFilters.length > 0 && ps && ps.charts && ps.charts[0]) {
+        const dimensions = ps.charts[0].state.dimensions;
+        if (!dimensions) return;
+        
+        const filteredData = reorderedData.filter(row => {
+          return brushFilters.every(filter => {
+            const attrValue = row[filter.attribute];
+            const dim = dimensions[filter.attribute];
+            
+            if (dim && dim.yscale) {
+              const pixelPos = dim.yscale(attrValue);
+              return pixelPos >= filter.yExtent[0] && pixelPos <= filter.yExtent[1];
+            }
+            return true;
+          });
+        });
+        
+        if (filteredData.length !== lastFilteredCount) {
+          renderCustomTable(filteredData);
+          lastFilteredCount = filteredData.length;
+        }
+      } else {
+        // No brushes, restore full table
+        renderCustomTable(reorderedData);
+        lastFilteredCount = reorderedData.length;
+      }
+    };
+    
+    // Set up observer - cache data IN the mutation callback
+    setTimeout(() => {
+      const dimensions = document.querySelectorAll('.parcoords .dimension');
+      const selections = document.querySelectorAll('.parcoords .brush .selection');
+      
+      window._brushObserver = new MutationObserver((mutations) => {
+        // Update cache directly from mutations - NO DOM queries
+        mutations.forEach(mutation => {
+          const target = mutation.target;
+          const dimElement = target.closest('.dimension');
+          
+          if (dimElement) {
+            const label = dimElement.querySelector('.label');
+            const dimLabel = label ? label.textContent : '';
+            const attrKey = Object.keys(attributeTitles).find(
+              k => attributeTitles[k] === dimLabel
+            ) || dimLabel;
+            
+            // Read directly from the mutated element
+            const isActive = target.style.display !== 'none';
+            
+            if (isActive) {
+              const y = parseFloat(target.getAttribute('y'));
+              const height = parseFloat(target.getAttribute('height'));
+              
+              if (!isNaN(y) && !isNaN(height)) {
+                cachedBrushData[attrKey] = {
+                  attribute: attrKey,
+                  yExtent: [y, y + height],
+                  active: true
+                };
+              }
+            } else {
+              if (cachedBrushData[attrKey]) {
+                cachedBrushData[attrKey].active = false;
+              }
+            }
+          }
+        });
+        
+        // Debounced table update - reduced delay for faster response
+        if (updateTimeout) clearTimeout(updateTimeout);
+        updateTimeout = setTimeout(updateTableFromBrush, 0);
+      });
+      
+      selections.forEach(sel => {
+        window._brushObserver.observe(sel, {
+          attributes: true,
+          attributeFilter: ['y', 'height', 'style']
+        });
+      });
+    }, 100);
+
     // Sliders
     d3.select("#bundling").on("input", function () {
       currentBundling = +this.value / 100;
@@ -464,17 +577,53 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
         .bundleDimension("cluster")
         .render();
       reapplyOrdinalLabels();
+      restoreBrushes();
     });
     d3.select("#smoothness").on("input", function () {
       currentSmoothness = +this.value / 100;
       psLocal.smoothness(currentSmoothness).render();
       reapplyOrdinalLabels();
+      restoreBrushes();
     });
     d3.select("#alpha").on("input", function () {
       currentAlpha = +this.value / 100;
       psLocal.alpha(currentAlpha).render();
       reapplyOrdinalLabels();
+      restoreBrushes();
     });
+    
+    // Function to restore brush extents after render
+    function restoreBrushes() {
+      if (!cachedBrushData || Object.keys(cachedBrushData).length === 0) return;
+      
+      setTimeout(() => {
+        Object.entries(cachedBrushData).forEach(([attrKey, brushData]) => {
+          if (!brushData.active) return;
+          
+          // Find the dimension element for this attribute
+          d3.selectAll('.parcoords .dimension').each(function() {
+            const dimGroup = d3.select(this);
+            const label = dimGroup.select('.label');
+            const dimLabel = label ? label.text() : '';
+            const currentAttrKey = Object.keys(attributeTitles).find(
+              k => attributeTitles[k] === dimLabel
+            ) || dimLabel;
+            
+            if (currentAttrKey === attrKey) {
+              // Restore the brush extent
+              const brushGroup = dimGroup.select('.brush');
+              if (!brushGroup.empty() && brushGroup.node().__brush) {
+                const brush = brushGroup.node().__brush;
+                
+                // Set the extent - this should trigger Parasol's brush handler
+                const extent = [[0, brushData.yExtent[0]], [0, brushData.yExtent[1]]];
+                brushGroup.call(brush.move, extent);
+              }
+            }
+          });
+        });
+      }, 100);
+    }
 
     return psLocal;
   }
@@ -1081,7 +1230,11 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
           ? selectedAttributes.filter((c) => !initialCols.includes(c))
           : []
       );
-      // If any row has weightSum, add it as the last column
+      // If any row has cluster, add it before weightedScore
+      if (data && data.some((row) => row.hasOwnProperty("cluster"))) {
+        if (!cols.includes("cluster")) cols.push("cluster");
+      }
+      // If any row has weightedScore, add it as the last column
       if (data && data.some((row) => row.hasOwnProperty("weightedScore"))) {
         if (!cols.includes("weightedScore")) cols.push("weightedScore");
       }
@@ -1215,9 +1368,47 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
 
       // Second header row: attributeTitles or raw column name
       const headerRow = document.createElement("tr");
-      // Selection column header (empty)
+      // Selection column header with "select all" checkbox
       const selectTh2 = document.createElement("th");
-      selectTh2.className = "bg-base-200 border border-base-300";
+      selectTh2.className = "bg-base-200 border border-base-300 text-center";
+      const selectAllCheckbox = document.createElement("input");
+      selectAllCheckbox.type = "checkbox";
+      selectAllCheckbox.className = "checkbox checkbox-xs";
+      selectAllCheckbox.title = "Select/Deselect All";
+      
+      // Check if all currently visible rows are selected
+      const allSelected = filteredRows.every(row => selectedRows.has(getRowId(row)));
+      selectAllCheckbox.checked = allSelected && filteredRows.length > 0;
+      
+      selectAllCheckbox.addEventListener("change", function() {
+        if (this.checked) {
+          // Select all visible rows
+          filteredRows.forEach(row => {
+            selectedRows.add(getRowId(row));
+          });
+        } else {
+          // Deselect all visible rows
+          filteredRows.forEach(row => {
+            selectedRows.delete(getRowId(row));
+          });
+        }
+        renderTable();
+        updatePagination();
+        
+        // Update PCP highlighting
+        if (ps && typeof ps.highlight === "function") {
+          const selected = data.filter((r) =>
+            selectedRows.has(getRowId(r))
+          );
+          if (selected.length > 0) {
+            ps.highlight(selected);
+          } else {
+            ps.unhighlight(data);
+          }
+        }
+      });
+      
+      selectTh2.appendChild(selectAllCheckbox);
       headerRow.appendChild(selectTh2);
 
       columnsToShow.forEach((key) => {
@@ -1259,6 +1450,47 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
       for (let i = startIdx; i < endIdx; i++) {
         const row = filteredRows[i];
         const tr = document.createElement("tr");
+        
+        // Add hover effect
+        tr.addEventListener("mouseenter", function() {
+          if (!selectedRows.has(getRowId(row))) {
+            tr.classList.add("hover:bg-base-200");
+            tr.style.backgroundColor = "#f3f4f6";
+          }
+          // Highlight the corresponding line in PCP along with selected rows
+          if (ps && typeof ps.highlight === "function") {
+            // Find ALL selected rows from the full dataset, not just filteredRows
+            const selected = data.filter((r) =>
+              selectedRows.has(getRowId(r))
+            );
+            // Highlight both the hovered row and any selected rows
+            const toHighlight = [...selected];
+            if (!selectedRows.has(getRowId(row))) {
+              toHighlight.push(row);
+            }
+            ps.highlight(toHighlight);
+          }
+        });
+        tr.addEventListener("mouseleave", function() {
+          if (!selectedRows.has(getRowId(row))) {
+            tr.classList.remove("hover:bg-base-200");
+            tr.style.backgroundColor = "";
+          }
+          // Restore highlighting to selected rows or clear if none selected
+          if (ps && typeof ps.unhighlight === "function") {
+            // Find ALL selected rows from the full dataset, not just filteredRows
+            const selected = data.filter((r) =>
+              selectedRows.has(getRowId(r))
+            );
+            if (selected.length > 0) {
+              ps.highlight(selected);
+            } else {
+              // Clear all highlighting - unhighlight all rows
+              ps.unhighlight(data);
+            }
+          }
+        });
+        
         // Selection checkbox
         const tdSelect = document.createElement("td");
         tdSelect.className = "text-center border border-base-300";
@@ -1269,7 +1501,6 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
         checkbox.checked = selectedRows.has(rowId);
         checkbox.addEventListener("change", function () {
           if (this.checked) {
-            console.log("checked");
             selectedRows.add(rowId);
             tr.classList.add("bg-base-200");
           } else {
@@ -1279,7 +1510,8 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
           }
           // Highlight all selected rows in Parasol
           if (ps && typeof ps.highlight === "function") {
-            const selected = filteredRows.filter((r) =>
+            // Find ALL selected rows from the full dataset, not just filteredRows
+            const selected = data.filter((r) =>
               selectedRows.has(getRowId(r))
             );
             if (selected.length == 0) {
