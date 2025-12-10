@@ -1,13 +1,16 @@
 
 
  /* ---- ./parcoords.css ---- */
+
+
  .parcoords > svg, .parcoords > canvas {
-     font: 14px sans-serif;
      position: absolute;
+      overflow: visible;
  }
 
  .parcoords > canvas {
      pointer-events: none;
+  
  }
 
  .parcoords text.label {

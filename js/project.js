@@ -1,4 +1,9 @@
 // -------------------------------------------
+// -------------------------------------------
+// #region 0. UPDATE ALL GRAPHS & TABLES
+// -------------------------------------------
+
+// #endregion
 // LOAD CSV + BUILD EVERYTHING
 // -------------------------------------------
 d3.csv("data/leagues_data_filled.csv").then(function (data) {
@@ -20,6 +25,21 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
     "defenceAggressionClass",
     "defenceTeamWidthClass",
   ]);
+  const heatmapAttributes = [
+    "buildUpPlaySpeed",
+    "buildUpPlayDribbling",
+    "buildUpPlayPassing",
+    "buildUpPlayPositioningClass",
+    "chanceCreationPassing",
+    "chanceCreationCrossing",
+    "chanceCreationShooting",
+    "chanceCreationPositioningClass",
+    "defencePressure",
+    "defenceAggression",
+    "defenceTeamWidth",
+    "defenceDefenderLineClass",
+  ];
+
   const ordinalMappings = {
     buildUpPlayPositioningClass: { Organised: 1, "Free Form": 2 },
     chanceCreationPositioningClass: { Organised: 1, "Free Form": 2 },
@@ -59,6 +79,8 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
   });
 
   const attributeTitles = {
+    league_name: "League",
+    team_name: "Team",
     buildUpPlaySpeed: "Speed",
     buildUpPlayDribbling: "Dribbling",
     buildUpPlayPassing: "Passing",
@@ -94,15 +116,6 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
       "defenceDefenderLineClass",
     ],
   };
-  const weightedAttributes = Object.values(attributeGroups).flat();
-  let attributeWeights = {};
-  weightedAttributes.forEach((a) => (attributeWeights[a] = 1));
-
-  //#endregion
-
-  // -------------------------------------------
-  // #region 2. PARASOL (PARALLEL COORDINATES) LOGIC
-  // -------------------------------------------
 
   let currentColorMode = "league";
   let currentClusterK = 12;
@@ -113,11 +126,13 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
   let currentSmoothness = 0;
   // current bundling strength (0-1)
   let currentBundling = 0;
-  // Track selected teams to persist across rebuilds
-  let selectedTeamNames = [];
-  let gridInstance = null;
 
-  const angryRainbow = d3.scaleSequential((t) =>
+  const leagues = Array.from(new Set(data.map((d) => d.league_name))).sort();
+  let selectedLeagues = leagues.slice();
+
+  let selectedAttributes = heatmapAttributes.slice();
+
+  let angryRainbow = d3.scaleSequential((t) =>
     d3.hsl(t * 360, 1, 0.5).toString()
   );
 
@@ -154,6 +169,65 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
     return "";
   }
 
+  const weightedAttributes = Object.values(attributeGroups).flat();
+  let attributeWeights = {};
+  weightedAttributes.forEach((a) => (attributeWeights[a] = 1));
+
+  function updateAll() {
+    if(selectedLeagues.length == 0){
+      document.getElementById("show-league-message").classList.remove("hidden");
+      document.getElementById("graphs").style.display = "none";
+      return
+    }
+    else{
+      document.getElementById("show-league-message").classList.add("hidden");
+      document.getElementById("graphs").style.display = "";
+    }
+
+    // Show/hide curve smoothness and bundling strength controls
+    const smoothDiv = document.getElementById("curve-smoothness-div");
+    const bundlingDiv = document.getElementById("bundling-strength-div");
+    const showAdvanced = selectedLeagues.length > 1;
+    if (smoothDiv) smoothDiv.style.display = showAdvanced ? "" : "none";
+    if (bundlingDiv) bundlingDiv.style.display = showAdvanced ? "" : "none";
+    // PCP
+    const currentLeagues = Array.isArray(selectedLeagues)
+      ? selectedLeagues
+      : [];
+    if (currentLeagues.length === 0) {
+      renderEmptyParasol();
+    } else {
+      const leagueRows = filteredData.filter((d) =>
+        currentLeagues.includes(d.league_name)
+      );
+      const payload = leagueRows.map((d) => {
+        const obj = { league_name: d.league_name, team_name: d.team_name };
+        selectedAttributes.forEach((a) => {
+          obj[a] = d[a];
+        });
+        if ("weightedScore" in d) obj.weightedScore = d.weightedScore;
+        return obj;
+      });
+      initParasol(payload);
+    }
+    // Heatmap
+    renderLeagueHeatmap(selectedLeagues);
+    // Weight sliders
+    renderWeightSliders();
+    // Table
+    const tableRows =
+      selectedLeagues.length === 0
+        ? []
+        : filteredData.filter((d) => selectedLeagues.includes(d.league_name));
+    renderCustomTable(tableRows);
+  }
+
+  //#endregion
+
+  // -------------------------------------------
+  // #region 2. PARASOL (PARALLEL COORDINATES) LOGIC
+  // -------------------------------------------
+
   function computeWeightedScores(data) {
     data.forEach((d) => {
       let sum = 0,
@@ -169,53 +243,37 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
     return data;
   }
 
-  function applyColoring(psInstance, mode, dataForParasol) {
+  function applyColoring(psInstance, dataForParasol) {
     if (!psInstance) return;
-    const modeLower = (mode || "league").toLowerCase();
+    const modeLower = selectedLeagues.length == 1 ? "cluster" : "league";
 
     if (modeLower === "league") {
-      const leagues = Array.from(
-        new Set(
-          (dataForParasol || psInstance.state.data).map((d) => d.league_name)
-        )
-      );
-      const customColors = [
-        '#000000', // Blue
-        '#e69f00', // Yellow
-        '#56b4e9', // Green
-        '#009e73', // Red
-        '#f0e442', // Purple
-        '#0072b2', // Orange
-        '#d55e00', // Brown
-        '#cc79a7', // Pink
-        '#666666', // Gray
-        '#cccccc', // Olive
-        '#808000', // Cyan
-      ];
       const leagueColor = d3
         .scaleOrdinal()
-        .domain(leagues)
-        .range(customColors);
-      psInstance.color((d) => leagueColor(d.league_name)).render();
-    } else if (modeLower === "cluster") {
-      const data = dataForParasol || psInstance.state.data;
-      const clusters = Array.from(new Set(data.map((d) => d.cluster)));
-      const clusterPalette = d3
-        .scaleOrdinal()
-        .domain(clusters)
+        .domain(selectedLeagues)
         .range(
-          clusters.map((_, i) =>
-            angryRainbow(clusters.length === 1 ? 0 : i / (clusters.length - 1))
+          selectedLeagues.map((_, i) =>
+            angryRainbow(
+              selectedLeagues.length === 1
+                ? 0
+                : i / (selectedLeagues.length - 1)
+            )
           )
         );
-      psInstance.color((d) => clusterPalette(d.cluster)).render();
-    } else if (modeLower === "weighted") {
-      const domain = d3.extent(dataForParasol, (d) => +d.weightedScore);
-      const colorScale = d3
-        .scaleSequential(d3.interpolateYlOrRd)
-        .domain(domain);
-      psInstance.color((d) => colorScale(+d.weightedScore)).render();
-    } 
+      psInstance.color((d) => leagueColor(d.league_name)).render();
+    } else {
+      const data = dataForParasol || psInstance.state.data;
+      const clusterPalette = d3
+        .scaleOrdinal()
+        .domain(data)
+        .range(
+          data.map((_, i) =>
+            angryRainbow(data.length === 1 ? 0 : i / (data.length - 1))
+          )
+        );
+      // Assign cluster index based on row order if not present
+      psInstance.color((d, i) => clusterPalette(i)).render();
+    }
   }
 
   function reapplyOrdinalLabels() {
@@ -224,14 +282,28 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
       if (!parcoordsSvg.empty()) {
         parcoordsSvg.selectAll(".dimension").each(function () {
           const dimGroup = d3.select(this);
-          const axisTitle = dimGroup.select(".label").text();
-          if (ordinalLabels[axisTitle]) {
+          // Get the raw attribute key from the axis (not the pretty label)
+          let axisKey = dimGroup.attr("data-dimension");
+          // Fallback: try to map from label text to key
+          if (!axisKey) {
+            const axisTitle = dimGroup.select(".label").text();
+            axisKey =
+              Object.keys(attributeTitles).find(
+                (k) => attributeTitles[k] === axisTitle
+              ) || axisTitle;
+          }
+          // Set pretty axis label if possible
+          if (attributeTitles[axisKey]) {
+            dimGroup.select(".label").text(attributeTitles[axisKey]);
+          }
+          // For ordinal axes, relabel ticks
+          if (ordinalLabels[axisKey]) {
             dimGroup.selectAll(".tick").each(function () {
               const tick = d3.select(this);
               const textEl = tick.select("text");
               const numValue = parseFloat(textEl.text());
               if (!isNaN(numValue)) {
-                const mapped = ordinalLabels[axisTitle][numValue];
+                const mapped = ordinalLabels[axisKey][numValue];
                 if (mapped) textEl.text(mapped);
                 else tick.style("display", "none");
               }
@@ -246,19 +318,55 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
     if (!Array.isArray(dataForParasol)) dataForParasol = [];
     document.querySelector(".parcoords").innerHTML = "";
 
-    const psBase = Parasol(dataForParasol)(".parcoords")
+    // Ensure columns start with selectedAttributes (plus league_name, team_name)
+    const baseCols = ["league_name", "team_name"];
+    const orderedCols = baseCols.concat(
+      selectedAttributes.filter(
+        (attr) =>
+          !baseCols.includes(attr) &&
+          dataForParasol.some((d) => d.hasOwnProperty(attr))
+      )
+    );
+    // Reorder each row to match orderedCols
+    const reorderedData = dataForParasol.map((row) => {
+      const newRow = {};
+      orderedCols.forEach((col) => {
+        newRow[col] = row[col];
+      });
+      // Include any extra keys not in orderedCols
+      Object.keys(row).forEach((col) => {
+        if (!orderedCols.includes(col)) newRow[col] = row[col];
+      });
+      return newRow;
+    });
+
+    // Map axis labels to attributeTitles for Parasol (force mapping after render)
+    const axisLabels = {};
+    orderedCols.forEach((col) => {
+      if (
+        col !== "league_name" &&
+        col !== "team_name" &&
+        attributeTitles[col]
+      ) {
+        axisLabels[col] = attributeTitles[col];
+      }
+    });
+
+    const psBase = Parasol(reorderedData)(".parcoords")
       .reorderable()
       .linked()
       .alpha(currentAlpha);
 
-    const keys = dataForParasol.length ? Object.keys(dataForParasol[0]) : [];
+
+    const keys = reorderedData.length ? Object.keys(reorderedData[0]) : [];
     const numericVars = keys.filter(
       (k) =>
         k !== "league_name" &&
         k !== "team_name" &&
-        dataForParasol.some((d) => !isNaN(+d[k]))
+        reorderedData.some((d) => !isNaN(+d[k]))
     );
     let psLocal = psBase;
+
     if (numericVars.length > 0) {
       psLocal = psBase.cluster({
         k: currentClusterK,
@@ -266,7 +374,25 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
         hidden: false,
       });
     }
+
     psLocal = psLocal.render();
+
+    // Force axis label mapping after render (for libraries that require post-render relabel)
+    if (Object.keys(axisLabels).length > 0 && psLocal.axisLabels) {
+      psLocal.axisLabels(axisLabels);
+      // Also try to update SVG labels directly if needed
+      setTimeout(() => {
+        const svg = document.querySelector(".parcoords svg");
+        if (svg) {
+          svg.querySelectorAll(".dimension .label").forEach((labelEl) => {
+            const raw = labelEl.textContent;
+            if (axisLabels[raw]) {
+              labelEl.textContent = axisLabels[raw];
+            }
+          });
+        }
+      }, 50);
+    }
 
     // Apply saved smoothness and bundling settings
     if (currentSmoothness > 0) {
@@ -279,53 +405,18 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
       psLocal.render();
     }
 
-    // Store grid instance and restore selections
-    setTimeout(() => {
-      // Try to get grid instance from the container via jQuery data
-      const $gridContainer = window.$ ? window.$('#grid') : null;
-      if ($gridContainer && $gridContainer.length) {
-        const dataKeys = $gridContainer.data();
-        // Check for grid in jQuery data
-        for (let key in dataKeys) {
-          const val = dataKeys[key];
-          if (val && typeof val === 'object' && val.getSelectedRows) {
-            gridInstance = val;
-            restoreGridSelections();
-            break;
-          }
-        }
-      }
-      // Alternative: look for SlickGrid directly in grid children
-      if (!gridInstance) {
-        const gridDiv = document.getElementById('grid');
-        if (gridDiv && gridDiv.children.length > 0) {
-          for (let child of gridDiv.children) {
-            if (child.slickGrid) {
-              gridInstance = child.slickGrid;
-              restoreGridSelections();
-              break;
-            }
-          }
-        }
-      }
-    }, 150);
-
-    setTimeout(reapplyOrdinalLabels, 10);
-    currentParasolData = dataForParasol;
-    applyColoring(psLocal, currentColorMode, dataForParasol);
-
-    // Hide axes logic
-    const uniqueLeagues = Array.from(
-      new Set(dataForParasol.map((d) => d.league_name))
-    );
-    if (uniqueLeagues.length === 1 && psLocal.hideAxes) {
+    if (selectedLeagues.length === 1) {
       psLocal.hideAxes(["league_name"]);
       psLocal.showAxes(["team_name"]);
       psLocal.alpha(0.5).render();
-    } else if (psLocal.showAxes) {
+    } else {
       psLocal.showAxes(["league_name"]);
       psLocal.hideAxes(["team_name"]);
     }
+
+    setTimeout(reapplyOrdinalLabels, 10);
+    currentParasolData = reorderedData;
+    applyColoring(psLocal, reorderedData);
 
     // Sliders
     d3.select("#bundling").on("input", function () {
@@ -372,38 +463,29 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
     if (selectedAttributes.length === 0) {
       panel
         .append("div")
-        .style("font-size", "13px")
-        .style("color", "#666")
-        .style("padding", "6px")
         .text("Select attributes in the heatmap to adjust their weights.");
       return;
     }
     const groups = ["Build Up", "Chance Creation", "Defence"];
     groups.forEach((groupName) => {
+      console.log(selectedAttributes)
       const attrsInGroup = attributeGroups[groupName].filter((a) =>
         selectedAttributes.includes(a)
       );
+      console.log(attrsInGroup);
       if (attrsInGroup.length === 0) return;
       panel
         .append("div")
-        .style("font-weight", "600")
-        .style("color", "#1565c0")
-        .style("margin-top", "6px")
+        .attr("class", "fieldset-legend font-medium divider ")
         .text(groupName);
       attrsInGroup.forEach((attr) => {
         const row = panel
           .append("div")
-          .style("display", "flex")
-          .style("align-items", "center")
-          .style("gap", "6px");
+          .attr('class', 'flex flex-row gap-1 items-center')
         row
           .append("span")
-          .style("flex", "1")
-          .style("font-size", "12.5px")
-          .style("overflow", "hidden")
-          .style("text-overflow", "ellipsis")
-          .style("white-space", "nowrap")
-          .text(attr);
+          .attr("class", "fieldset-legend text-sm w-64")
+          .text(attributeTitles[attr] ?? attr);
         row
           .append("input")
           .attr("type", "range")
@@ -411,7 +493,7 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
           .attr("max", 2)
           .attr("step", 0.1)
           .attr("value", attributeWeights[attr])
-          .style("width", "80px")
+          .attr("class", "range range-xs ")
           .on("input", function () {
             attributeWeights[attr] = +this.value;
           });
@@ -421,25 +503,10 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
       .append("button")
       .attr("id", "apply-weights")
       .text("Apply Weights")
-      .style("display", "block")
-      .style("margin", "12px auto")
-      .style("padding", "6px 14px")
-      .style("font-size", "13px")
-      .style("border", "1.5px solid #1565c0")
-      .style("border-radius", "6px")
-      .style("background", "white")
-      .style("color", "#1565c0")
-      .style("cursor", "pointer")
-      .style("font-weight", "600")
-      .on("mouseover", function () {
-        d3.select(this).style("background", "#1565c0").style("color", "white");
-      })
-      .on("mouseout", function () {
-        d3.select(this).style("background", "white").style("color", "#1565c0");
-      })
+      .attr("class", "btn btn-primary btn-outline")
       .on("click", function () {
         computeWeightedScores(filteredData);
-        rebuildParasolFromSelection();
+        updateAll();
       });
   }
   // #endregion
@@ -447,33 +514,6 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
   // -------------------------------------------
   // #region 4. HEATMAP LOGIC (Plotly)
   // -------------------------------------------
-  const heatmapAttributes = [
-    "buildUpPlaySpeed",
-    "buildUpPlayDribbling",
-    "buildUpPlayPassing",
-    "buildUpPlayPositioningClass",
-    "chanceCreationPassing",
-    "chanceCreationCrossing",
-    "chanceCreationShooting",
-    "chanceCreationPositioningClass",
-    "defencePressure",
-    "defenceAggression",
-    "defenceTeamWidth",
-    "defenceDefenderLineClass",
-  ];
-
-  function getLeagueAttributeMeans(leagueName) {
-    const leagueRows =
-      leagueName === "All Leagues"
-        ? filteredData
-        : filteredData.filter((d) => d.league_name === leagueName);
-    const means = {};
-    heatmapAttributes.forEach((attr) => {
-      const vals = leagueRows.map((d) => +d[attr]).filter((v) => !isNaN(v));
-      means[attr] = d3.mean(vals);
-    });
-    return means;
-  }
 
   function renderLeagueHeatmap(leagueSelection) {
     const selected = Array.isArray(leagueSelection)
@@ -496,17 +536,8 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
       ? filteredData
       : filteredData.filter((d) => selected.includes(d.league_name));
 
-    // Only show selectedColumns in the heatmap
-    if (!selectedColumns || selectedColumns.length === 0) {
-      const hm = document.getElementById("heatmap");
-      if (hm)
-        hm.innerHTML =
-          '<div style="padding:8px;color:#555;">Start by selecting some columns</div>';
-      return;
-    }
-
-    // Use only selectedColumns for the heatmap
-    const attrs = selectedColumns.slice();
+    // Use only selectedAttributes for the heatmap
+    const attrs = heatmapAttributes.slice();
     const attrValues = attrs.map((attr) =>
       leagueRows.map((d) => {
         const n = +d[attr];
@@ -544,11 +575,9 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
       return num / denom;
     }
 
-    // Compute correlation matrix for selected columns
+    // Compute correlation matrix for all columns
     const matrix = attrs.map((a, i) =>
-      attrs.map((b, j) =>
-        i === j ? 1 : pearson(attrValues[i], attrValues[j])
-      )
+      attrs.map((b, j) => (i === j ? 1 : pearson(attrValues[i], attrValues[j])))
     );
     const clamped = matrix.map((row) =>
       row.map((v) => Math.max(-1, Math.min(1, v)))
@@ -557,22 +586,22 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
     const zReordered = clamped.slice().reverse();
     const textReordered = zReordered.map((row) => row.map((v) => v.toFixed(2)));
 
-    document.getElementById(
-      "heatmap-title"
-    ).textContent = `Attribute Correlation Heatmap`;
+    // Use pretty attribute titles for axis labels
+    const xLabels = attrs.map((a) => attributeTitles[a] || a);
+    const yLabels = yAttrs.map((a) => attributeTitles[a] || a);
 
     Plotly.newPlot(
       "heatmap",
       [
         {
           z: zReordered,
-          x: attrs,
-          y: yAttrs,
+          x: xLabels,
+          y: yLabels,
           type: "heatmap",
           colorscale: [
-            [0, '#7b3294'],    // Purple (negative)
-            [0.5, '#f7f7f7'],  // White (neutral)
-            [1, '#e66101'],
+            [0, "#7b3294"], // Purple (negative)
+            [0.5, "#f7f7f7"], // White (neutral)
+            [1, "#e66101"],
           ],
           zmin: -1,
           zmax: 1,
@@ -585,32 +614,23 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
       ],
       {
         width: null,
-        height: null,
+        height: "100%",
         autosize: true,
-        margin: { l: 200, r: 120, t: 20, b: 160 },
-        xaxis: { automargin: true, tickangle: -30, tickfont: { size: 10 } },
-        yaxis: { automargin: true, tickfont: { size: 10 } },
+        margin: {r: 200, t: 20, b: 150 },
+        xaxis: { automargin: true, tickfont: { size: 9 }, tickangle: -30 },
+        yaxis: { automargin: true, tickfont: { size: 9} },
       },
       { responsive: true, displayModeBar: false }
     );
-    // Make heatmap fill parent container
-    const heatmapDiv = document.getElementById("heatmap");
-    if (heatmapDiv) {
-      heatmapDiv.style.width = "100%";
-      heatmapDiv.style.height = "100%";
-    }
-    Plotly.Plots.resize("heatmap");
+
     setupLabelClickHandling();
+    updateAxisLabelHighlights();
   }
   // #endregion
 
   // -------------------------------------------
   // #region 5. DROPDOWNS & SELECTION LOGIC
   // -------------------------------------------
-  const leagues = Array.from(new Set(data.map((d) => d.league_name))).sort();
-  let selectedLeagues = leagues.slice();
-  console.log(heatmapAttributes);
-  let selectedAttributes = heatmapAttributes.slice();
 
   function updateLeagueDropdownLabel() {
     const labelEl = document.getElementById("league-dropdown-toggle");
@@ -636,8 +656,7 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
       cb.checked = cb.value === leagueName;
     });
     updateLeagueDropdownLabel();
-    renderLeagueHeatmap(selectedLeagues);
-    rebuildParasolFromSelection();
+    updateAll();
     announceSelection(leagueName + " only");
     document.getElementById("league-dropdown-menu").style.display = "none";
     updateAxisLabelHighlights();
@@ -649,8 +668,7 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
       cb.checked = true;
     });
     updateLeagueDropdownLabel();
-    renderLeagueHeatmap(selectedLeagues);
-    rebuildParasolFromSelection();
+    updateAll();
     announceSelection("All leagues selected");
     updateAxisLabelHighlights();
   }
@@ -661,8 +679,7 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
       cb.checked = false;
     });
     updateLeagueDropdownLabel();
-    renderLeagueHeatmap(selectedLeagues);
-    rebuildParasolFromSelection();
+    updateAll();
     announceSelection("No leagues selected");
     updateAxisLabelHighlights();
   }
@@ -699,7 +716,7 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
           : selectedLeagues.length + " leagues selected"
       );
       renderLeagueHeatmap(selectedLeagues);
-      rebuildParasolFromSelection();
+      updateAll();
       updateAxisLabelHighlights();
     });
     const label = document.createElement("span");
@@ -749,68 +766,57 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
     document.getElementById("league-dropdown-menu").style.display = "none";
   });
 
-  const columns = heatmapAttributes.slice();
-  let selectedColumns = columns.slice();
-
   function updateColumnDropdownLabel() {
     const labelEl = document.getElementById("column-visibility-dropdown-label");
     if (!labelEl) return;
-    if (selectedColumns.length === columns.length)
+    if (selectedAttributes.length === selectedAttributes.length)
       labelEl.textContent = "All Columns";
-    else if (selectedColumns.length === 0) labelEl.textContent = "No Columns";
-    else if (selectedColumns.length === 1)
+    else if (selectedAttributes.length === 0)
+      labelEl.textContent = "No Columns";
+    else if (selectedAttributes.length === 1)
       labelEl.textContent =
-        attributeTitles[selectedColumns[0]] || selectedColumns[0];
-    else labelEl.textContent = `${selectedColumns.length} columns selected`;
+        attributeTitles[selectedAttributes[0]] || selectedAttributes[0];
+    else labelEl.textContent = `${selectedAttributes.length} columns selected`;
   }
 
   function singleSelectColumn(colName) {
-    selectedColumns = [colName];
+    selectedAttributes = [colName];
     document.querySelectorAll("input.column-checkbox").forEach((cb) => {
       cb.checked = cb.value === colName;
     });
     updateColumnDropdownLabel();
     syncAttributesWithColumns();
+    updateAll();
   }
 
   function selectAllColumns() {
-    selectedColumns = columns.slice();
     document.querySelectorAll("input.column-checkbox").forEach((cb) => {
       cb.checked = true;
     });
     updateColumnDropdownLabel();
     syncAttributesWithColumns();
+    updateAll();
   }
 
   function clearAllColumns() {
-    selectedColumns = [];
+    selectedAttributes = [];
     document.querySelectorAll("input.column-checkbox").forEach((cb) => {
       cb.checked = false;
     });
     updateColumnDropdownLabel();
     syncAttributesWithColumns();
+    updateAll();
   }
 
   // Inject column checkboxes into the dropdown menu
   const colMenu = document.getElementById("column-visibility-dropdown-menu");
   let lastType = null;
-  columns.forEach((col, idx) => {
+  heatmapAttributes.forEach((col, idx) => {
     const type = getColumnType(col);
-    // Insert a separator when the type changes (except before the first group)
-    if (type !== lastType && idx !== 0) {
-      const sep = document.createElement("div");
-      sep.className = "border-t border-base-300 my-1";
-      colMenu.appendChild(sep);
-    }
-    
 
     if (type !== lastType) {
       const typeTitle = document.createElement("div");
-      typeTitle.className = "dropdown-type-title";
-      typeTitle.style.fontWeight = "bold";
-      typeTitle.style.color = "#1565c0";
-      typeTitle.style.marginTop = idx === 0 ? "0" : "8px";
-      typeTitle.style.marginBottom = "2px";
+      typeTitle.className = "divider fieldset-legend font-medium";
       typeTitle.textContent = type;
       colMenu.appendChild(typeTitle);
     }
@@ -823,7 +829,7 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
     checkbox.type = "checkbox";
     checkbox.className = "checkbox checkbox-xs column-checkbox";
     checkbox.value = col;
-    checkbox.checked = selectedColumns.includes(col);
+    checkbox.checked = selectedAttributes.includes(col);
     checkbox.setAttribute("aria-label", "Select " + col);
     checkbox.id = "col-" + col.replace(/\s+/g, "-");
     checkbox.addEventListener("click", (e) => e.stopPropagation());
@@ -831,9 +837,9 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
       const value = this.value;
       const isChecked = this.checked;
       if (isChecked) {
-        if (!selectedColumns.includes(value)) selectedColumns.push(value);
+        if (!selectedAttributes.includes(value)) selectedAttributes.push(value);
       } else {
-        selectedColumns = selectedColumns.filter((c) => c !== value);
+        selectedAttributes = selectedAttributes.filter((c) => c !== value);
       }
       updateColumnDropdownLabel();
       syncAttributesWithColumns();
@@ -889,18 +895,15 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
 
   // Sync selected columns with heatmap attribute selection
   function syncAttributesWithColumns() {
-    selectedAttributes = selectedColumns.slice();
     updateAxisLabelHighlights();
-    rebuildParasolFromSelection();
-    renderWeightSliders();
-    renderLeagueHeatmap(selectedLeagues);
+    updateAll();
   }
 
   // When heatmap selection changes, update columns dropdown
   function syncColumnsWithAttributes() {
-    selectedColumns = selectedAttributes.slice();
+    selectedAttributes = selectedAttributes.slice();
     document.querySelectorAll("input.column-checkbox").forEach((cb) => {
-      cb.checked = selectedColumns.includes(cb.value);
+      cb.checked = selectedAttributes.includes(cb.value);
     });
     updateColumnDropdownLabel();
   }
@@ -921,14 +924,18 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
   // -------------------------------------------
   // #region 6. ATTRIBUTE SELECTION & PCP REBUILD
   // -------------------------------------------
+
   function updateAxisLabelHighlights() {
     const heatmapDiv = document.getElementById("heatmap");
     if (!heatmapDiv) return;
     const svgTexts = heatmapDiv.querySelectorAll("text");
     svgTexts.forEach((textEl) => {
       const labelText = textEl.textContent.trim();
-      const isSelected = selectedAttributes.indexOf(labelText) !== -1;
-      const isAttribute = heatmapAttributes.indexOf(labelText) !== -1;
+      const heatmapAttr = Object.keys(attributeTitles).find(
+        (key) => attributeTitles[key] === labelText
+      );
+      const isSelected = selectedAttributes.indexOf(heatmapAttr) !== -1;
+      const isAttribute = heatmapAttributes.indexOf(heatmapAttr) !== -1;
       if (isAttribute) {
         textEl.style.fontWeight = isSelected ? "bold" : "normal";
         textEl.style.fill = isSelected ? "#d32f2f" : "#000";
@@ -949,7 +956,10 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
     const svgTexts = heatmapDiv.querySelectorAll("text");
     svgTexts.forEach((textEl) => {
       const labelText = textEl.textContent.trim();
-      const isAttribute = heatmapAttributes.indexOf(labelText) !== -1;
+      const heatmapAttr = Object.keys(attributeTitles).find(
+        (key) => attributeTitles[key] === labelText
+      );
+      const isAttribute = heatmapAttributes.indexOf(heatmapAttr) !== -1;
       if (isAttribute) {
         textEl.style.pointerEvents = "auto";
         textEl.style.cursor = "pointer";
@@ -958,12 +968,13 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
           function (e) {
             e.stopPropagation();
             e.preventDefault();
-            toggleAttribute(labelText);
+            toggleAttribute(heatmapAttr);
           },
           true
         );
       }
     });
+    updateAxisLabelHighlights();
   }
   function toggleAttribute(attr) {
     if (!attr) return;
@@ -971,73 +982,9 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
     if (i === -1) selectedAttributes.push(attr);
     else selectedAttributes.splice(i, 1);
     updateAxisLabelHighlights();
-    rebuildParasolFromSelection();
-    renderWeightSliders();
-  }
-  function captureGridSelections() {
-    selectedTeamNames = [];
-    if (gridInstance && gridInstance.getSelectedRows) {
-      const selectedRows = gridInstance.getSelectedRows();
-      const dataView = gridInstance.getData();
-      if (dataView && dataView.getItem) {
-        selectedRows.forEach(rowIdx => {
-          const item = dataView.getItem(rowIdx);
-          if (item && item.team_name) {
-            selectedTeamNames.push(item.team_name);
-          }
-        });
-      }
-    }
+    updateAll();
   }
 
-  function restoreGridSelections() {
-    if (!gridInstance || selectedTeamNames.length === 0) return;
-    
-    const dataView = gridInstance.getData();
-    if (!dataView || !dataView.getLength) return;
-    
-    const rowsToSelect = [];
-    for (let i = 0; i < dataView.getLength(); i++) {
-      const item = dataView.getItem(i);
-      if (item && selectedTeamNames.includes(item.team_name)) {
-        rowsToSelect.push(i);
-      }
-    }
-    
-    if (rowsToSelect.length > 0 && gridInstance.setSelectedRows) {
-      gridInstance.setSelectedRows(rowsToSelect);
-    }
-  }
-
-  function rebuildParasolFromSelection() {
-    // Capture current selections before rebuild
-    captureGridSelections();
-    
-    const currentLeagues = Array.isArray(selectedLeagues)
-      ? selectedLeagues
-      : [];
-    if (currentLeagues.length === 0) {
-      renderEmptyParasol();
-      return;
-    }
-    const leagueRows = filteredData.filter((d) =>
-      currentLeagues.includes(d.league_name)
-    );
-    const payload = leagueRows.map((d) => {
-      const obj = { league_name: d.league_name, team_name: d.team_name };
-      selectedAttributes.forEach((a) => {
-        obj[a] = d[a];
-      });
-      if ("weightedScore" in d) obj.weightedScore = d.weightedScore;
-      return obj;
-    });
-    ps = initParasol(payload);
-  }
-  // #endregion
-
-  // -------------------------------------------
-  // #region 7. CLUSTER COUNT & COLOR MODE SELECTORS
-  // -------------------------------------------
   const clusterCountSelect = d3.select("#cluster-count-select");
   const clusterOptions = [3, 4, 5, 6, 7, 8, 9, 10, 12, 15];
   clusterCountSelect
@@ -1052,32 +999,10 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
     const k = +this.value;
     if (!isNaN(k) && k > 1) {
       currentClusterK = k;
-      const currentLeagues = Array.isArray(selectedLeagues)
-        ? selectedLeagues
-        : [];
-      if (currentLeagues.length === 0) {
-        renderEmptyParasol();
-        return;
-      }
-      const leagueRows = filteredData.filter((d) =>
-        currentLeagues.includes(d.league_name)
-      );
-      const payload = leagueRows.map((d) => {
-        const obj = { league_name: d.league_name, team_name: d.team_name };
-        selectedAttributes.forEach((a) => {
-          obj[a] = d[a];
-        });
-        return obj;
-      });
-      ps = initParasol(payload);
+      updateAll();
     }
   });
-  const colorBySelect = d3.select("#color-by-select");
-  colorBySelect.property("value", currentColorMode);
-  colorBySelect.on("change", function () {
-    currentColorMode = this.value;
-    applyColoring(ps, currentColorMode, currentParasolData);
-  });
+
   // #endregion
 
   // -------------------------------------------
@@ -1097,12 +1022,12 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
 
     const initialCols = ["league_name", "team_name"];
 
-    // Only show selectedColumns, fallback to all if none selected
+    // Only show selectedAttributes, fallback to all if none selected
     function getColumnsToShow() {
-      // Show initialCols (league_name, team_name) plus any selectedColumns (no duplicates)
+      // Show initialCols (league_name, team_name) plus any selectedAttributes (no duplicates)
       const cols = initialCols.concat(
-        selectedColumns
-          ? selectedColumns.filter((c) => !initialCols.includes(c))
+        selectedAttributes
+          ? selectedAttributes.filter((c) => !initialCols.includes(c))
           : []
       );
       return cols;
@@ -1166,6 +1091,10 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
       filteredRows.sort((a, b) => {
         const valA = a[sortColumn];
         const valB = b[sortColumn];
+        // For ordinal columns, sort by mapped numeric value
+        if (ordinalMappings[sortColumn]) {
+          return (valA - valB) * sortDirection;
+        }
         // Numeric sort if both values are numbers
         if (!isNaN(valA) && !isNaN(valB)) {
           return (valA - valB) * sortDirection;
@@ -1228,9 +1157,7 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
           "text-center"
         );
         // Show pretty title if available
-        if (key === "team_name") th.textContent = "Team";
-        else if (key === "league_name") th.textContent = "League";
-        else th.textContent = attributeTitles[key] || key;
+        th.textContent = attributeTitles[key] || key;
         // Add sort indicator
         if (sortColumn === key) {
           th.textContent += sortDirection === 1 ? " ▲" : " ▼";
@@ -1265,23 +1192,24 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
           if (key == "team_name" || key == "league_name")
             td.className = "whitespace-nowrap border border-base-300";
           else td.className = "text-center border border-base-300";
-          td.textContent = row[key];
+          // For ordinal columns, show label if available
+          if (ordinalMappings[key] && row[key + "_label"]) {
+            td.textContent = row[key + "_label"];
+          } else {
+            td.textContent = row[key];
+          }
           tr.appendChild(td);
         });
         tr.addEventListener("mouseenter", function () {
+          tr.classList.add("bg-base-200");
           if (ps && typeof ps.highlight === "function") {
             ps.highlight([row]);
           }
         });
         tr.addEventListener("mouseleave", function () {
+          tr.classList.remove("bg-base-200");
           if (ps && typeof ps.highlight === "function") {
-            // Highlight all rows when none is hovered
-            ps.highlight([]);
-            // Remove faded class from the foreground canvas
-            const fgCanvas = document.querySelector(
-              ".parcoords canvas.foreground"
-            );
-            if (fgCanvas) fgCanvas.classList.remove("faded");
+            ps.unhighlight([row]);
           }
         });
         tbody.appendChild(tr);
@@ -1297,9 +1225,11 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
     // Re-render table when columns change
     if (!window._customTableColumnListenerAdded) {
       window._customTableColumnListenerAdded = true;
-      let lastColumns = selectedColumns ? selectedColumns.slice() : [];
+      let lastColumns = selectedAttributes ? selectedAttributes.slice() : [];
       setInterval(() => {
-        const currentColumns = selectedColumns ? selectedColumns.slice() : [];
+        const currentColumns = selectedAttributes
+          ? selectedAttributes.slice()
+          : [];
         if (
           currentColumns.length !== lastColumns.length ||
           currentColumns.some((col, i) => col !== lastColumns[i])
@@ -1325,14 +1255,7 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
   // -------------------------------------------
   // #region 8. INITIAL RENDERS
   // -------------------------------------------
-  const initialParasolPayload = filteredData.map((d) => ({
-    league_name: d.league_name,
-    team_name: d.team_name,
-  }));
-  let ps = initParasol(initialParasolPayload);
-  renderLeagueHeatmap(selectedLeagues);
-  renderWeightSliders();
-  renderCustomTable(filteredData);
+  updateAll();
 
   // #endregion
 });
