@@ -247,32 +247,34 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
     if (!psInstance) return;
     const modeLower = selectedLeagues.length == 1 ? "cluster" : "league";
 
+    const customColors = [
+      '#000000', // Black
+      '#e69f00', // Orange
+      '#56b4e9', // Sky Blue
+      '#009e73', // Green
+      '#f0e442', // Yellow
+      '#0072b2', // Blue
+      '#d55e00', // Vermillion
+      '#cc79a7', // Pink
+      '#666666', // Gray
+      '#cccccc', // Light Gray
+      '#808000', // Olive
+    ];
+
     if (modeLower === "league") {
       const leagueColor = d3
         .scaleOrdinal()
-        .domain(selectedLeagues)
-        .range(
-          selectedLeagues.map((_, i) =>
-            angryRainbow(
-              selectedLeagues.length === 1
-                ? 0
-                : i / (selectedLeagues.length - 1)
-            )
-          )
-        );
+        .domain(leagues)
+        .range(customColors);
       psInstance.color((d) => leagueColor(d.league_name)).render();
     } else {
       const data = dataForParasol || psInstance.state.data;
+      const clusters = Array.from(new Set(data.map((d) => d.cluster)));
       const clusterPalette = d3
         .scaleOrdinal()
-        .domain(data)
-        .range(
-          data.map((_, i) =>
-            angryRainbow(data.length === 1 ? 0 : i / (data.length - 1))
-          )
-        );
-      // Assign cluster index based on row order if not present
-      psInstance.color((d, i) => clusterPalette(i)).render();
+        .domain(clusters)
+        .range(customColors);
+      psInstance.color((d) => clusterPalette(d.cluster)).render();
     }
   }
 
