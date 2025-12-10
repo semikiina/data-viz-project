@@ -179,10 +179,23 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
           (dataForParasol || psInstance.state.data).map((d) => d.league_name)
         )
       );
+      const customColors = [
+        '#000000', // Blue
+        '#e69f00', // Yellow
+        '#56b4e9', // Green
+        '#009e73', // Red
+        '#f0e442', // Purple
+        '#0072b2', // Orange
+        '#d55e00', // Brown
+        '#cc79a7', // Pink
+        '#666666', // Gray
+        '#cccccc', // Olive
+        '#808000', // Cyan
+      ];
       const leagueColor = d3
         .scaleOrdinal()
         .domain(leagues)
-        .range(d3.schemeCategory10);
+        .range(customColors);
       psInstance.color((d) => leagueColor(d.league_name)).render();
     } else if (modeLower === "cluster") {
       const data = dataForParasol || psInstance.state.data;
@@ -202,7 +215,7 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
         .scaleSequential(d3.interpolateYlOrRd)
         .domain(domain);
       psInstance.color((d) => colorScale(+d.weightedScore)).render();
-    }
+    } 
   }
 
   function reapplyOrdinalLabels() {
