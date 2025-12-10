@@ -644,7 +644,7 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
           colorbar: { tickvals: [-1, -0.5, 0, 0.5, 1] },
           text: textReordered,
           texttemplate: "%{text}",
-          hoverinfo: "text+z",
+          hovertemplate: "<b>%{x}</b> vs <b>%{y}</b><br>Correlation: %{text}<extra></extra>",
         },
       ],
       {
