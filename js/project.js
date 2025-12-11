@@ -808,9 +808,9 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
           y: yLabels,
           type: "heatmap",
           colorscale: [
-            [0, "#7b3294"], // Purple (negative)
+            [0, "#56b4e9"], // Purple (negative)
             [0.5, "#f7f7f7"], // White (neutral)
-            [1, "#e66101"],
+            [1, "#e69f00"],
           ],
           zmin: -1,
           zmax: 1,
