@@ -130,7 +130,7 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
   const leagues = Array.from(new Set(data.map((d) => d.league_name))).sort();
   let selectedLeagues = leagues.slice();
 
-  let selectedAttributes = heatmapAttributes.slice();
+  let selectedAttributes = [];
 
   let ps = null;
 
@@ -213,7 +213,8 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
           obj[a] = d[a];
         });
         if ("weightedScore" in d) obj.weightedScore = d.weightedScore;
-        if ("cluster" in d) obj.cluster = d.cluster;
+        // Don't include old cluster values - let Parasol create fresh ones
+        // if ("cluster" in d) obj.cluster = d.cluster;
         return obj;
       });
       initParasol(payload);
@@ -259,53 +260,37 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
   function applyColoring(psInstance, dataForParasol) {
     if (!psInstance) return;
     const customColors = [
-      "#000000", // Black
-      "#e69f00", // Orange
+      // Okabe-Ito palette
       "#56b4e9", // Sky Blue
-      "#009e73", // Green
-      "#f0e442", // Yellow
-      "#0072b2", // Blue
       "#d55e00", // Vermillion
       "#cc79a7", // Pink
+      "#009e73", // Green
+      "#f0e442", // Yellow
+      "#e69f00", // Orange
+      "#0072b2", // Blue
+
+      // Additional colors
+      "#000000", // Black
+      "#996636ff", // Brown
       "#666666", // Gray
-      "#cccccc", // Light Gray
       "#808000", // Olive
+
+      // Extra color if 12 clusters selected
+      "#cccccc" // Light Gray
     ];
-    // If clusters are enabled (k > 0), color by cluster, else by league/team
+    
+    // If clusters are enabled (k > 0), color by cluster, else by league
     if (currentClusterK > 0) {
       const data = dataForParasol || psInstance.state.data;
-      const customColors = [
-        "#000000", // Blue
-        "#e69f00", // Yellow
-        "#56b4e9", // Green
-        "#009e73", // Red
-        "#f0e442", // Purple
-        "#0072b2", // Orange
-        "#d55e00", // Brown
-        "#cc79a7", // Pink
-        "#666666", // Gray
-        "#cccccc", // Olive
-        "#808000", // Cyan
-      ];
       const clusterPalette = d3.scaleOrdinal().domain(data).range(customColors);
-      psInstance.color((d) => clusterPalette(d.cluster)).render();
+      psInstance.color((d) => clusterPalette(d.cluster));
     } else {
-      // If only one league, color by team; else by league
-      if (selectedLeagues.length === 1) {
-        const teams = Array.from(
-          new Set(
-            (dataForParasol || psInstance.state.data).map((d) => d.team_name)
-          )
-        );
-        const teamColor = d3.scaleOrdinal().domain(teams).range(customColors);
-        psInstance.color((d) => teamColor(d.team_name)).render();
-      } else {
-        const leagueColor = d3
-          .scaleOrdinal()
-          .domain(leagues)
-          .range(customColors);
-        psInstance.color((d) => leagueColor(d.league_name)).render();
-      }
+      // Create explicit color map based on selection order
+      const colorMap = {};
+      selectedLeagues.forEach((league, idx) => {
+        colorMap[league] = customColors[idx % customColors.length];
+      });
+      psInstance.color((d) => colorMap[d.league_name] || customColors[0]);
     }
   }
 
@@ -350,6 +335,13 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
   function initParasol(dataForParasol) {
     if (!Array.isArray(dataForParasol)) dataForParasol = [];
     document.querySelector(".parcoords").innerHTML = "";
+
+    // Clear old cluster assignments from filteredData when cluster count changes
+    filteredData.forEach(d => {
+      if (currentClusterK === 0) {
+        delete d.cluster;
+      }
+    });
 
     // Determine which base columns to include based on number of leagues
     const uniqueLeagues = Array.from(
@@ -417,6 +409,33 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
     psLocal = psLocal.render();
     ps = psLocal;
     
+    // Apply colors based on selection order
+    const customColors = [
+      "#56b4e9", // Sky Blue
+      "#e69f00", // Orange
+      "#009e73", // Green
+      "#f0e442", // Yellow
+      "#0072b2", // Blue
+      "#d55e00", // Vermillion
+      "#cc79a7", // Pink
+      "#000000", // Black
+      "#666666", // Gray
+      "#cccccc", // Light Gray
+      "#808000", // Olive
+    ];
+    
+    if (currentClusterK > 0) {
+      const clusterPalette = d3.scaleOrdinal().range(customColors);
+      psLocal.color((d) => clusterPalette(d.cluster)).render();
+    } else {
+      // Create explicit color map based on selection order
+      const colorMap = {};
+      selectedLeagues.forEach((league, idx) => {
+        colorMap[league] = customColors[idx % customColors.length];
+      });
+      psLocal.color((d) => colorMap[d.league_name] || customColors[0]).render();
+    }
+    
     // Sync cluster assignments back to filteredData for table display
     if (currentClusterK > 0 && psLocal.state && psLocal.state.data) {
       psLocal.state.data.forEach((clusteredRow) => {
@@ -426,12 +445,15 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
         if (match && clusteredRow.cluster !== undefined) {
           match.cluster = clusteredRow.cluster;
         }
+        
+        // ALSO sync to reorderedData for brush filtering
+        const reorderedMatch = reorderedData.find(
+          (d) => d.league_name === clusteredRow.league_name && d.team_name === clusteredRow.team_name
+        );
+        if (reorderedMatch && clusteredRow.cluster !== undefined) {
+          reorderedMatch.cluster = clusteredRow.cluster;
+        }
       });
-    }
-
-    // Enable brushing
-    if (typeof psLocal.brushable === 'function') {
-      psLocal.brushable();
     }
 
     // Force axis label mapping after render (for libraries that require post-render relabel)
@@ -472,69 +494,67 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
     }
 
     setTimeout(reapplyOrdinalLabels, 10);
+    
+    // Apply coloring AFTER all render() calls to prevent colors from being reset
     applyColoring(psLocal, reorderedData);
+    psLocal.render();
 
-    // Clean up old brush monitoring
-    if (window._brushObserver) {
-      window._brushObserver.disconnect();
-      window._brushObserver = null;
+    // Enable brushing
+    if (typeof psLocal.brushable === 'function') {
+      psLocal.brushable();
     }
-    
-    let updateTimeout = null;
-    let lastFilteredCount = 0;
-    let cachedBrushData = {}; // Cache brush state from mutations
-    
-    const updateTableFromBrush = () => {
-      // Use ONLY cached data - don't query DOM at all
-      const brushFilters = Object.values(cachedBrushData).filter(b => b.active);
-      
-      if (brushFilters.length > 0 && ps && ps.charts && ps.charts[0]) {
-        const dimensions = ps.charts[0].state.dimensions;
-        if (!dimensions) return;
-        
-        const filteredData = reorderedData.filter(row => {
-          return brushFilters.every(filter => {
-            const attrValue = row[filter.attribute];
-            const dim = dimensions[filter.attribute];
-            
-            if (dim && dim.yscale) {
-              const pixelPos = dim.yscale(attrValue);
-              return pixelPos >= filter.yExtent[0] && pixelPos <= filter.yExtent[1];
-            }
-            return true;
-          });
-        });
-        
-        if (filteredData.length !== lastFilteredCount) {
-          renderCustomTable(filteredData);
-          lastFilteredCount = filteredData.length;
-        }
-      } else {
-        // No brushes, restore full table
-        renderCustomTable(reorderedData);
-        lastFilteredCount = reorderedData.length;
-      }
-    };
-    
-    // Set up observer - cache data IN the mutation callback
+
+    // Set up MutationObserver to watch for brush changes and update table
     setTimeout(() => {
-      const dimensions = document.querySelectorAll('.parcoords .dimension');
-      const selections = document.querySelectorAll('.parcoords .brush .selection');
+      const parcoords = document.querySelector('.parcoords');
+      if (!parcoords) return;
       
-      window._brushObserver = new MutationObserver((mutations) => {
-        // Update cache directly from mutations - NO DOM queries
+      let updateTimeout = null;
+      const cachedBrushData = {};
+      
+      const updateTableFromBrush = () => {
+        const brushFilters = Object.values(cachedBrushData).filter(b => b.active);
+        
+        if (brushFilters.length > 0 && ps && ps.charts && ps.charts[0]) {
+          const dimensions = ps.charts[0].state.dimensions;
+          if (!dimensions) return;
+          
+          const filteredData = reorderedData.filter(row => {
+            return brushFilters.every(filter => {
+              const attrValue = row[filter.attribute];
+              const dim = dimensions[filter.attribute];
+              
+              if (dim && dim.yscale) {
+                const pixelPos = dim.yscale(attrValue);
+                const match = pixelPos >= filter.yExtent[0] && pixelPos <= filter.yExtent[1];
+                return match;
+              }
+              return true;
+            });
+          });
+          
+          renderCustomTable(filteredData);
+        } else {
+          renderCustomTable(reorderedData);
+        }
+      };
+      
+      const observer = new MutationObserver((mutations) => {
         mutations.forEach(mutation => {
           const target = mutation.target;
-          const dimElement = target.closest('.dimension');
           
+          if (!target.classList || !target.classList.contains('selection')) {
+            return;
+          }
+          
+          const dimElement = target.closest('.dimension');
           if (dimElement) {
             const label = dimElement.querySelector('.label');
-            const dimLabel = label ? label.textContent : '';
-            const attrKey = Object.keys(attributeTitles).find(
+            const dimLabel = label ? label.textContent.trim() : '';
+            let attrKey = Object.keys(attributeTitles).find(
               k => attributeTitles[k] === dimLabel
             ) || dimLabel;
             
-            // Read directly from the mutated element
             const isActive = target.style.display !== 'none';
             
             if (isActive) {
@@ -556,18 +576,17 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
           }
         });
         
-        // Debounced table update - reduced delay for faster response
         if (updateTimeout) clearTimeout(updateTimeout);
         updateTimeout = setTimeout(updateTableFromBrush, 0);
       });
       
-      selections.forEach(sel => {
-        window._brushObserver.observe(sel, {
-          attributes: true,
-          attributeFilter: ['y', 'height', 'style']
-        });
+      observer.observe(parcoords, {
+        attributes: true,
+        attributeFilter: ['y', 'height', 'style'],
+        subtree: true,
+        childList: true
       });
-    }, 100);
+    }, 300);
 
     // Sliders
     d3.select("#bundling").on("input", function () {
@@ -576,18 +595,24 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
         .bundlingStrength(currentBundling)
         .bundleDimension("cluster")
         .render();
+      applyColoring(psLocal, reorderedData);
+      psLocal.render();
       reapplyOrdinalLabels();
       restoreBrushes();
     });
     d3.select("#smoothness").on("input", function () {
       currentSmoothness = +this.value / 100;
       psLocal.smoothness(currentSmoothness).render();
+      applyColoring(psLocal, reorderedData);
+      psLocal.render();
       reapplyOrdinalLabels();
       restoreBrushes();
     });
     d3.select("#alpha").on("input", function () {
       currentAlpha = +this.value / 100;
       psLocal.alpha(currentAlpha).render();
+      applyColoring(psLocal, reorderedData);
+      psLocal.render();
       reapplyOrdinalLabels();
       restoreBrushes();
     });
@@ -953,7 +978,7 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
   function updateColumnDropdownLabel() {
     const labelEl = document.getElementById("column-visibility-dropdown-label");
     if (!labelEl) return;
-    if (selectedAttributes.length === selectedAttributes.length)
+    if (selectedAttributes.length === heatmapAttributes.length)
       labelEl.textContent = "All Columns";
     else if (selectedAttributes.length === 0)
       labelEl.textContent = "No Columns";
@@ -1182,7 +1207,7 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
   }
 
   const clusterCountSelect = d3.select("#cluster-count-select");
-  const clusterOptions = [0, 3, 4, 5, 6, 7, 8, 9, 10, 12, 15];
+  const clusterOptions = [0, 3, 4, 5, 6, 7, 8, 9, 10, 12];
   // Clear and append options manually to ensure 0 is always present
   clusterCountSelect.html("");
   clusterOptions.forEach((d) => {
