@@ -526,11 +526,16 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
           (b) => b.active
         );
 
+        // Always start with current selectedLeagues from filteredData (global scope)
+        const leagueFilteredData = filteredData.filter((d) =>
+          selectedLeagues.includes(d.league_name)
+        );
+
         if (brushFilters.length > 0 && ps && ps.charts && ps.charts[0]) {
           const dimensions = ps.charts[0].state.dimensions;
           if (!dimensions) return;
 
-          const filteredData = reorderedData.filter((row) => {
+          const brushedData = leagueFilteredData.filter((row) => {
             return brushFilters.every((filter) => {
               const attrValue = row[filter.attribute];
               const dim = dimensions[filter.attribute];
@@ -546,9 +551,9 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
             });
           });
 
-          renderCustomTable(filteredData);
+          renderCustomTable(brushedData);
         } else {
-          renderCustomTable(reorderedData);
+          renderCustomTable(leagueFilteredData);
         }
       };
 
