@@ -230,6 +230,7 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
       selectedLeagues.length === 0
         ? []
         : filteredData.filter((d) => selectedLeagues.includes(d.league_name));
+    
     renderCustomTable(tableRows);
   }
 
@@ -690,7 +691,9 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
       panel
         .append("div")
         .attr("class", "text-xs")
-        .text("Select attributes in the heatmap to adjust their weights.");
+        .text(
+          "Please select one or more attributes to adjust their weights."
+        );
       return;
     }
     const groups = ["Build Up", "Chance Creation", "Defence"];
@@ -869,10 +872,7 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
     else span.textContent = `${selectedLeagues.length} leagues selected`;
   }
 
-  function announceSelection(msg) {
-    const el = document.getElementById("sr-announce");
-    if (el) el.textContent = msg;
-  }
+ 
 
   function singleSelectLeague(leagueName) {
     selectedLeagues = [leagueName];
@@ -881,7 +881,6 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
     });
     updateLeagueDropdownLabel();
     updateAll();
-    announceSelection(leagueName + " only");
     document.getElementById("league-dropdown-menu").style.display = "none";
     updateAxisLabelHighlights();
   }
@@ -893,7 +892,6 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
     });
     updateLeagueDropdownLabel();
     updateAll();
-    announceSelection("All leagues selected");
     updateAxisLabelHighlights();
   }
 
@@ -904,7 +902,6 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
     });
     updateLeagueDropdownLabel();
     updateAll();
-    announceSelection("No leagues selected");
     updateAxisLabelHighlights();
   }
 
@@ -930,15 +927,6 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
         selectedLeagues = selectedLeagues.filter((l) => l !== value);
       }
       updateLeagueDropdownLabel();
-      announceSelection(
-        selectedLeagues.length === 0
-          ? "No leagues selected"
-          : selectedLeagues.length === leagues.length
-          ? "All leagues selected"
-          : selectedLeagues.length === 1
-          ? selectedLeagues[0] + " selected"
-          : selectedLeagues.length + " leagues selected"
-      );
       renderLeagueHeatmap(selectedLeagues);
       updateAll();
       updateAxisLabelHighlights();
@@ -1024,6 +1012,7 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
     });
     updateColumnDropdownLabel();
     syncAttributesWithColumns();
+    updateAll();
   }
 
   function clearAllColumns() {
