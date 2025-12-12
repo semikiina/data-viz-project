@@ -178,6 +178,15 @@ d3.csv("data/leagues_data_filled.csv").then(function (data) {
       document.getElementById("graphs").style.display = "";
     }
 
+    if(selectedAttributes.length == 0){
+      document.getElementById("parcoords-holder").classList.remove("hidden");
+      document.getElementById("p0").classList.add("hidden");
+    }
+    else{
+      document.getElementById("parcoords-holder").classList.add("hidden");
+      document.getElementById("p0").classList.remove("hidden");
+    }
+
     const smoothnessSlider = document.getElementById("curve-smoothness-div");
     const bundlingSlider = document.getElementById("bundling-strength-div");
     const clusterDiv = document.getElementById("cluster-div");
